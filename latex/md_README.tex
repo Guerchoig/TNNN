@@ -1,0 +1,91 @@
+\hypertarget{md_README_autotoc_md1}{}\doxysection{Network}\label{md_README_autotoc_md1}
+The network includes the visual detectiors layer {\bfseries{Retina}} and the cerebral network {\bfseries{Cortex}}, both containing layers of LIF {\bfseries{Neurons}}. The inputs of retinal neurons represent input currents proportional to image changes The input data of the neurons of the {\bfseries{Cortex}} are spikes of the neurons from the previous layer Each neural spike is stored in the common {\bfseries{Events buffer}} as a set of {\bfseries{Events}}, addressed to one of neurons.
+
+The spike goes not immediately each of them corresponding to an appropriate integer {\itshape fire\+\_\+delay} of the synapse (1, 2, ...). The connection del\hypertarget{md_README_autotoc_md2}{}\doxysection{Neuron ($<$em$>$neuro\+\_\+node\+\_\+t$<$/em$>$)}\label{md_README_autotoc_md2}
+stores\+: \begin{quote}
+-\/ current membrane potential,
+\begin{DoxyItemize}
+\item current membrane potential threshold,
+\item time of last fire
+\item and a vector of short groups (vectors) of {\bfseries{Connections}}, each group corresponding to an appropriate (integer) interneuronal distance 
+\end{DoxyItemize}\end{quote}
+\hypertarget{md_README_autotoc_md3}{}\doxysection{Spike Event ($<$em$>$event\+\_\+t$<$/em$>$)}\label{md_README_autotoc_md3}
+The event stores \begin{quote}
+-\/ the generalized address of the neuron which had spiked
+\begin{DoxyItemize}
+\item planned time of arrival of the spike to the next neuron
+\item the group of connections 
+\end{DoxyItemize}\end{quote}
+\hypertarget{md_README_autotoc_md4}{}\doxysection{Events Buffer ($<$em$>$events\+\_\+buffer$<$/em$>$)}\label{md_README_autotoc_md4}
+The {\itshape events\+\_\+buffer} is a special kind of a circular buffer. It is composed of short vectors of events, each of them corresponding to a the events, happened in the time interval between two consequitive \char`\"{}time indexes\char`\"{}. The temporal volume of the time buffer is calculated as \begin{quote}
+-\/ {\itshape time\+\_\+steps} = max\+\_\+neurons\+\_\+spiking\+\_\+contemporally $\ast$ eye\+\_\+reaction\+\_\+time = 1E4 $\ast$ 1E2 = 1E6 it$\ast$ms \end{quote}
+There are {\itshape time\+\_\+steps} (1E6) items in the {\itshape events\+\_\+buffer}, each item outstanding by ~\newline
+\hypertarget{md_README_autotoc_md5}{}\doxysection{To register an $<$strong$>$\+Event$<$/strong$>$ in the event buffer}\label{md_README_autotoc_md5}
+\begin{quote}
+-\/ at the upper level of buffer we go to the ~\newline
+ \end{quote}
+{\itshape upper\+\_\+level\+\_\+time\+\_\+index = planned\+\_\+time\+\_\+of\+\_\+arriving \% time\+\_\+steps} \begin{quote}
+-\/ if we find an event in the vector, having negative time of arrival or time of arrival $<$ {\itshape last\+\_\+processed\+\_\+time}, then we fill it with\+: \begin{quote}
+-\/ planned\+\_\+time\+\_\+of\+\_\+arrival
+\begin{DoxyItemize}
+\item generalized neuron address
+\item connection distance group index 
+\end{DoxyItemize}\end{quote}
+-\/ if the appropriate event were not found, then we add a new item to the vector
+\begin{DoxyItemize}
+\item we sort vector by time of arrival, include negative onces 
+\end{DoxyItemize}\end{quote}
+\hypertarget{md_README_autotoc_md6}{}\doxysection{Processing of an $<$strong$>$\+Event$<$/strong$>$ in the event buffer}\label{md_README_autotoc_md6}
+\begin{quote}
+we calculate time index as \end{quote}
+{\itshape upper\+\_\+level\+\_\+time\+\_\+index = last\+\_\+processed\+\_\+time \% time\+\_\+steps} ~\newline
+ \begin{quote}
+in a vector, residing at that index we search for the first non-\/negative time being greater than last\+\_\+processed\+\_\+time we go to the neuron address, find the appropriate connection group and update connected neurons according to the rules\+: \end{quote}
+\hypertarget{md_README_autotoc_md7}{}\doxysubsubsection{If projected k+1\+\_\+membrana\+\_\+potential $<$ detector\+\_\+threshold (ajustable)}\label{md_README_autotoc_md7}
+
+\begin{DoxyItemize}
+\item {\itshape k+1\+\_\+membrana\+\_\+potential = k\+\_\+membrana\+\_\+potential(1-\/leak\+\_\+alpha) + synapse\+\_\+weight;} mV
+\item {\itshape k+1\+\_\+detector\+\_\+threshold = k\+\_\+detector\+\_\+threshold $\ast$ (1 -\/ th\+\_\+alpha)} STDP 
+\end{DoxyItemize}
+
+\begin{quote}
+\#\#\#\# If projected k+1\+\_\+membrana\+\_\+potential $>$= detector\+\_\+threshold (ajustable)
+\begin{DoxyItemize}
+\item {\itshape k+1\+\_\+membrana\+\_\+potential = u\+\_\+rest}
+\item {\itshape k+1\+\_\+detector\+\_\+threshold = k\+\_\+detector\+\_\+threshold + delta\+\_\+threshold} 
+\end{DoxyItemize}\end{quote}
+\hypertarget{md_README_autotoc_md8}{}\doxysection{Parameters}\label{md_README_autotoc_md8}
+\begin{quote}
+-\/ {\itshape delta\+\_\+i\+\_\+input\+\_\+min} = 1;
+\begin{DoxyItemize}
+\item {\itshape reasonnable\+\_\+t\+\_\+acc\+\_\+max} = 1000; // ms
+\item {\itshape initial\+\_\+detector\+\_\+threshold} = 0.\+1 mV
+\item {\itshape detector\+\_\+alpha = initial\+\_\+detector\+\_\+threshold / reasonnable\+\_\+t\+\_\+acc\+\_\+max / delta\+\_\+i\+\_\+input\+\_\+min}; // 1e-\/4
+\item {\itshape visual\+\_\+detector\+\_\+threshold} = 1;
+\item {\itshape u\+\_\+rest = 10.\+0;}
+\item {\itshape leak\+\_\+alpha = 0.\+06}
+\item {\itshape th\+\_\+alpha = 0.\+06;}
+\item {\itshape delta\+\_\+threshold = 50.\+0}
+\item {\itshape time\+\_\+steps = 1000000} 
+\end{DoxyItemize}\end{quote}
+\hypertarget{md_README_autotoc_md9}{}\doxysection{Retina}\label{md_README_autotoc_md9}
+Retina consists of three arrays\+: ~\newline
+ \begin{quote}
+-\/ current view -\/ the current image from camera ~\newline
+
+
+
+\begin{DoxyItemize}
+\item previous view -\/ previous time step image from camera
+\item ajustable threshold-\/\+LIF neurons layer ~\newline
+ 
+\end{DoxyItemize}\end{quote}
+\hypertarget{md_README_autotoc_md10}{}\doxysubsection{Processing retina}\label{md_README_autotoc_md10}
+At every point of current view the difference between current view and previous view is calculated ~\newline
+ If the result is greater than {\itshape visual\+\_\+detector\+\_\+threshold}, then the appropriate inferent synapse of retina neuron is updated as described in {\bfseries{Processing of an Event in the event buffer}} whith a different way of calculating of the membrane sub-\/threshold potential\+: \begin{quote}
+-\/ {\itshape input\+\_\+current = current\+\_\+val -\/ prev\+\_\+val}; can take values 0--32K
+\begin{DoxyItemize}
+\item {\itshape k+1\+\_\+membrana\+\_\+potential = k\+\_\+membrana\+\_\+potential(1-\/leak\+\_\+alpha) + detector\+\_\+alpha $\ast$ input\+\_\+current $\ast$ delta\+\_\+time}; mV 
+\end{DoxyItemize}\end{quote}
+\hypertarget{md_README_autotoc_md11}{}\doxysection{Learning}\label{md_README_autotoc_md11}
+We use STDP learning rules as follows\+: 

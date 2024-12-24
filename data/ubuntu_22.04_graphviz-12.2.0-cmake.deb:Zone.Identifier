@@ -1,0 +1,4 @@
+[ZoneTransfer]
+ZoneId=3
+ReferrerUrl=https://gitlab.com/graphviz/graphviz/-/releases
+HostUrl=https://gitlab.com/api/v4/projects/4207231/packages/generic/graphviz-releases/12.2.0/ubuntu_22.04_graphviz-12.2.0-cmake.deb

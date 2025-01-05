@@ -6,9 +6,9 @@ set(PROJECT_VESRION 0.0.${PATCH_VERSION})
 project(TNN VERSION ${PROJECT_VESRION})
 
 # find_package(Boost COMPONENTS unit_test_framework REQUIRED)
-
-add_library(TNN src/brain.cpp src/input_output.cpp src/mnist_set.cpp)
 add_executable(test src/test.cpp )
+add_library(TNN src/brain.cpp src/input_output.cpp src/mnist_set.cpp src/clock_circular_buffer.cpp src/tracer.cpp)
+
 
 set_target_properties(TNN test PROPERTIES
     CXX_STANDARD 23

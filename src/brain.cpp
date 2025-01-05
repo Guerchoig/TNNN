@@ -1,5 +1,7 @@
 #include "input_output.h"
 #include "brain.h"
+#include "clock_circular_buffer.h"
+#include "tracer.h"
 #include <iostream>
 #include <vector>
 #include <utility>
@@ -10,16 +12,36 @@
 
 using namespace TNN;
 // Nodes ------------------------------------------------------------------
-void neuro_node_t::output(event_t &&ev)
+void neuro_node_t::output([[maybe_unused]] event_t &&ev)
 {
   phead->put_event(std::move(ev));
+
+  nof_events.fetch_add(1, std::memory_order_relaxed);
+  ptracer->update(ev.source_addr);
 }
 
-void actuator_node_t::output([[maybe_unused]] event_t &&ev)
+/*************  ✨ Codeium Command ⭐  *************/
+/**
+ * @brief Processes an output event for the actuator node.
+ *
+ * This function captures the current network time and stores it in a circular buffer.
+ * It ensures that only events within a specified time window (actuator_tau) are retained
+ * by removing older timestamps from the buffer.
+ *
+ * @param ev An optional event parameter that is not used in this function.
+ */
+
+/******  9eb5d012-4139-4542-80dd-dfc7dc3e2054  *******/ void actuator_node_t::output([[maybe_unused]] event_t &&ev)
 {
   auto t = phead->net_timer.time();
-  while()
+  clocks.push(t);
+  while (clocks.peek() < t - actuator_tau)
+    clocks.pop();
+}
 
+unsigned actuator_node_t::value()
+{
+  return clocks.size();
 }
 
 // Optics ------------------------------------------------------------------
@@ -153,8 +175,11 @@ void mnist_couch_layer_t::set_label(layer_dim_t i_label)
 head_t::head_t()
 {
   p_eyes_optics = std::make_shared<eyes_optics_t>();
-  auto nof_events = std::thread::hardware_concurrency() - 2;
-  for (unsigned i = 0; i < nof_events; ++i)
+
+  // nof_event_threads = std::thread::hardware_concurrency() / 2 - 1;
+  nof_event_threads = 2;
+
+  for (unsigned i = 0; i < nof_event_threads; ++i)
   {
     events.emplace_back(events_cirular_buffer_size);
   }
@@ -173,9 +198,47 @@ potential_t cortex_node_t::input(event_t &&e)
   return inferr_synapse.weight * delta_u_mem;
 }
 
+potential_t actuator_node_t::input(event_t &&e)
+{
+  auto &inferr_synapse = e.source_addr.ref().synapses[e.src_synapse];
+  return inferr_synapse.weight * delta_u_mem;
+}
+
 potential_t couch_node_t::input(event_t &&e)
 {
   return e.target_addr.ref().u_mem * leak_alpha;
+}
+
+void update_final_potential(event_t &&e)
+{
+  auto time_moment = phead->net_timer.time();
+  auto &trg = e.target_addr.ref();
+  trg.busy.lock();
+  // Add input
+  auto u = trg.u_mem * (1 - leak_alpha) + trg.input(std::forward<event_t>(e));
+
+  potential_t u_res = 0;
+  if (u < trg.threshold)
+  {
+    u_res = u;
+  }
+  else
+  {
+    // distance_t cur_distance = 0;
+    trg.last_fired = time_moment;
+
+    // afferr_synapse->last_fired = time_moment;
+    trg.output();
+    u_res = u_rest;
+    // cur_distance = afferr_synapse->delay;
+  }
+
+  trg.u_mem = u_res;
+
+  // if (e.target_addr.layer == 3 && e.source_addr.layer == 4 /*&& e.src_synapse == 5*/)
+  //   std::cout << "Umem: " << trg.u_mem << '\n';
+  trg.update_params(std::forward<event_t>(e), time_moment);
+  trg.busy.unlock();
 }
 
 void update_potential(event_t &&e)
@@ -216,8 +279,8 @@ void update_potential(event_t &&e)
   }
   trg.u_mem = u_res;
 
-  if (e.target_addr.layer == 3 && e.source_addr.layer == 4 /*&& e.src_synapse == 5*/)
-    std::cout << "Umem: " << trg.u_mem << '\n';
+  // if (e.target_addr.layer == 3 && e.source_addr.layer == 4 /*&& e.src_synapse == 5*/)
+  //   std::cout << "Umem: " << trg.u_mem << '\n';
   trg.update_params(std::forward<event_t>(e), time_moment);
   trg.busy.unlock();
 }
@@ -241,9 +304,6 @@ void head_t::wake_up(scene_t *pscene, unsigned width, unsigned heigth)
 
   // Init threads
   finish.store(false);
-  unsigned nof_event_threads = 3;
-  // std::thread::hardware_concurrency() / 2;
-
   threads.resize(nof_event_threads);
 
   // Start threads
@@ -254,7 +314,7 @@ void head_t::wake_up(scene_t *pscene, unsigned width, unsigned heigth)
   }
 }
 
-void head_t::go_to_sleep()
+void head_t::do_sleep()
 {
   finish.store(true);
   while (!threads.empty())
@@ -320,16 +380,16 @@ void mnist_couch_layer_t::worker()
     for (layer_dim_t j = 0; j < static_cast<layer_dim_t>(neurons[i].size()); ++j)
     {
       auto &src_ref = phead->layers.back()->node_ref(i, j);
-      update_potential({{layer_num, i, j},
-                        0, // one synapse per every neuron
-                        src_ref.synapses[0].target_addr,
-                        phead->net_timer.time(),
-                        1});
+      update_final_potential({{layer_num, i, j},
+                              0, // one synapse per every neuron
+                              src_ref.synapses[0].target_addr,
+                              phead->net_timer.time(),
+                              1});
     }
   }
-  for (auto n : neurons_storage)
-    n.u_mem = 0.0;
-  neurons_storage[label].u_mem = 1.0;
+  // for (auto n : neurons_storage)
+  //   n.u_mem = 0.0;
+  // neurons_storage[label].u_mem = 1.0;
 }
 
 void input_layers_worker()
@@ -406,15 +466,32 @@ void head_t::print_output(layer_dim_t layer_num)
   {
     for (size_t j = 0; j < layers.at(layer_num)->neurons[i].size(); ++j)
     {
-      std::cout << layers.at(layer_num)->node_ref(i, j).u_mem << " ";
+      std::cout << std::dynamic_pointer_cast<actuator_layer_t>(layers.at(layer_num))->node_ref(i, j).value() << " ";
     }
     std::cout << std::endl;
   }
 }
 
-// Openers------------------------------------------------
-neuro_node_t &neuron_address_t::ref()
+// Openers----------------------------------------------------------------
+neuro_node_t &
+neuron_address_t::ref()
 {
   auto &_layer = *(phead->layers.at(layer));
   return _layer.node_ref(row, col);
+}
+
+void print_weights_t::operator()(layer_dim_t layer_num, layer_dim_t row_num)
+{
+  std::lock_guard<atomic_mutex> guard(wmutex);
+  auto &layer = phead->layers[layer_num];
+  auto &neurons = layer->neurons;
+  auto &row = neurons[row_num];
+  for (auto col = row.begin(); col != row.end(); ++col)
+  {
+    auto &neuron = layer->node_ref(row_num, col - row.begin());
+    for (auto &synapse : neuron.synapses)
+      weights_file << synapse.weight << " ";
+    weights_file << std::endl;
+  }
+  weights_file << std::endl;
 }

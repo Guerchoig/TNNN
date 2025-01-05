@@ -1,6 +1,7 @@
 #include "brain.h"
 #include "input_output.h"
 #include "mnist_set.h"
+#include "tracer.h"
 
 #include <vector>
 #include <array>
@@ -8,8 +9,8 @@
 #include <fstream>
 using namespace TNN;
 
-
-void print_couch(){
+void print_couch()
+{
     auto couch_layer = std::dynamic_pointer_cast<mnist_couch_layer_t>(phead->layers[4]);
     std::cout << "Label: " << static_cast<int>(couch_layer->label) << " Val: ";
     for (size_t i = 0; i < 10; ++i)
@@ -25,6 +26,7 @@ int main()
 {
 
     phead = std::move(std::make_shared<head_t>());
+    ptracer = std::move(std::make_shared<tracer_t<5, 28, 9>>(1920, 1200));
 
     create_net({5,
                 {{TNN::RETINA, 28, 28},
@@ -79,20 +81,20 @@ int main()
             phead->set_focus(28, 28);
         }
 
-
-        std::chrono::milliseconds timespan(50);
+        std::chrono::milliseconds timespan(100);
 
         for (auto i = 0; i < 100; ++i)
         {
             // phead->saccade(2.0);
             std::this_thread::sleep_for(timespan);
         }
-
     }
 
     std::fstream ofile("../networks/net.out", std::ios::out | std::ios::trunc);
     ofile << *phead;
-    phead->go_to_sleep();
+    phead->print_output(3);
+    std::cout << "nof events: " << nof_events.load() << std::endl;
+    phead->do_sleep();
 
     return 0;
 }

@@ -52,15 +52,15 @@ void create_connections(const conn_descr_coll_t &descriptions)
     {
         auto &src_neurons = phead->layers[dsc->src_layer]->neurons;
         auto &trg_neurons = phead->layers[dsc->trg_layer]->neurons;
-        
+
         double row_ratio = 0;
         double col_ratio = 0;
-        
+
         if (src_neurons.size() == 1 && trg_neurons.size() == 1)
             row_ratio = 1;
         else
             row_ratio = static_cast<double>(trg_neurons.size() - 1) / (src_neurons.size() - 1);
-        
+
         if (src_neurons[0].size() == 1 && trg_neurons[0].size() == 1)
             col_ratio = 1;
         else
@@ -90,8 +90,8 @@ void create_layers(const network_descr_t &dsc)
     for (layer_dim_t i = 0; i < dsc.nof_layers; ++i)
     {
         auto l = create_layer_neurons(dsc.layers_descriptions[i].type,
-                                      dsc.layers_descriptions[i].dimensions.row,
-                                      dsc.layers_descriptions[i].dimensions.col);
+                                      dsc.layers_descriptions[i].dimensions.nof_rows,
+                                      dsc.layers_descriptions[i].dimensions.nof_cols);
     }
 }
 

@@ -1,11 +1,13 @@
 #pragma once
 #include "common.h"
+#include "clock_circular_buffer.h"
 #include <boost/circular_buffer.hpp>
 #include <cstring>
 #include <vector>
 #include <atomic>
 #include <memory>
 #include <iostream>
+#include <fstream>
 #include <type_traits>
 
 using input_val_t = int;
@@ -102,7 +104,7 @@ struct neuro_node_t
 
 	virtual void update_params([[maybe_unused]] event_t &&e,
 							   [[maybe_unused]] clock_count_t time_moment) {}
-	virtual void output(event_t &&ev);
+	virtual void output([[maybe_unused]] event_t &&ev = {});
 
 	neuro_node_t &operator=(const neuro_node_t &other)
 	{
@@ -153,13 +155,37 @@ struct couch_node_t : neuro_node_t
 	using neuro_node_t::neuro_node_t;
 };
 
-unsigned short constexpr nof_time_points = 4;
 struct actuator_node_t : neuro_node_t
 {
-	short action_strength = 0;
-	std::array<clock_count_t, nof_time_points> clocks{0, 0, 0, 0};
-	using neuro_node_t::neuro_node_t;
-	void output(event_t &&ev) override final;
+	clock_circular_buffer clocks;
+	// using neuro_node_t::neuro_node_t;
+	potential_t input(event_t &&e) override final;
+	void output([[maybe_unused]] event_t &&ev = {}) override final;
+	unsigned value();
+	actuator_node_t() : neuro_node_t::neuro_node_t() {}
+
+	actuator_node_t(potential_t u_mem,
+					potential_t threshold,
+					clock_count_t last_fired) : neuro_node_t::neuro_node_t(u_mem,
+																		   threshold,
+																		   last_fired)
+	{
+		;
+	}
+
+	actuator_node_t(const actuator_node_t &&other)
+	{
+		u_mem = other.u_mem;
+		threshold = other.threshold;
+		last_fired = other.last_fired;
+	}
+
+	actuator_node_t(const neuro_node_t &other)
+	{
+		u_mem = other.u_mem;
+		threshold = other.threshold;
+		last_fired = other.last_fired;
+	}
 };
 
 // Optics------------------------------------------------
@@ -340,13 +366,14 @@ struct head_t
 
 	void put_event(event_t &&event);
 	void wake_up(scene_t *pscene, unsigned width, unsigned heigth);
-	void go_to_sleep();
-	head_t();
+	void do_sleep();
 	void print_events();
 	void print_output(layer_dim_t layer_num);
+	head_t();
 };
 
 inline std::shared_ptr<head_t> phead;
+inline std::atomic<unsigned long long int> nof_events = 0;
 
 // Openers --------------------------------------------------
 
@@ -355,3 +382,21 @@ void update_potential(event_t &&e);
 void print_image(scene_t *pscene);
 
 void internal_layer_worker([[maybe_unused]] unsigned id);
+void input_layers_worker();
+struct print_weights_t
+{
+	atomic_mutex wmutex;
+	std::fstream weights_file;
+	// ("../networks/weigths.out", std::ios::out | std::ios::trunc);
+	void operator()(layer_dim_t layer_num, layer_dim_t row_num);
+	print_weights_t() : wmutex()
+	{
+		weights_file.open("../networks/weigths.out", std::ios::out | std::ios::trunc);
+		weights_file.precision(2);
+	}
+	~print_weights_t()
+	{
+		weights_file.close();
+	}
+};
+inline print_weights_t print_weights;

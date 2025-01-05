@@ -10,8 +10,8 @@ constexpr char data_dir[] = "../data/";
 
 struct rc_t
 {
-    layer_dim_t row;
-    layer_dim_t col;
+    layer_dim_t nof_rows;
+    layer_dim_t nof_cols;
 };
 
 struct syn_descr_t

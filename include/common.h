@@ -19,7 +19,7 @@
 #ifdef DEBUG
 #define D(x) std::cout << x
 #define ND std::cout << std::endl
-#define DN(x) std::cout << x << '\n'
+#define DN(x) std::cout << x << std::endl
 #define DF(x) x
 #else
 #define D(x) ;
@@ -148,4 +148,7 @@ struct net_timer_t
     }
 };
 
+
+
 void print_couch();
+inline unsigned nof_event_threads = 0;

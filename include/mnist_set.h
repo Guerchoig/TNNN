@@ -21,3 +21,4 @@ struct mnist_set
                   bool is_training);
     std::pair<scene_t *, uint8_t> next_image();
 };
+inline std::shared_ptr<mnist_set> pmnist;

@@ -1,6 +1,8 @@
 #pragma once
 #include "common.h"
 #include "clock_circular_buffer.h"
+#include "tracer.h"
+#include "tread_safe_queue.h"
 #include <boost/circular_buffer.hpp>
 #include <cstring>
 #include <vector>
@@ -11,7 +13,6 @@
 #include <type_traits>
 
 using input_val_t = int;
-using point_t = std::pair<int, int>;
 
 // Nof connections per neuron = exp(-alpha * (distance - 1)) * (sqr(distance) * 3 + distance * 6 + 4 ) * 2
 constexpr float alpha = 0.79f;
@@ -26,11 +27,11 @@ constexpr input_val_t delta_i_input_min = 1;
 constexpr clock_count_t reasonnable_t_acc_max = 1000; // ms
 constexpr potential_t u_mem_max = 1.0;
 constexpr potential_t delta_u_mem = 0.05;
-constexpr potential_t initial_neuron_threshold = 0.01;
+constexpr potential_t initial_neuron_threshold = 0.7;
 constexpr potential_t delta_threshold = 0.005;
 constexpr potential_t u_rest = 0.00;
 constexpr potential_t detector_alpha = initial_neuron_threshold / reasonnable_t_acc_max / delta_i_input_min; // 1e-4
-constexpr input_val_t visual_detector_threshold = 1;
+constexpr input_val_t visual_detector_threshold = 2;
 
 // u_i+1 = u_i * (1-leak_alpha) + detector_alpha * delta_i_input * delta_time; | u_i+1  < u_threshold
 // u_threshold_i+1 =  u_threshold_i * (1-th_alpha);                            |
@@ -88,6 +89,8 @@ struct synapse_t
 
 // Nodes-------------------------------------------------
 
+struct base_worker_t;
+
 /**
  * @brief This class represents a neuron in a neural network, with properties
  * and methods to manage its state and behavior
@@ -104,7 +107,7 @@ struct neuro_node_t
 
 	virtual void update_params([[maybe_unused]] event_t &&e,
 							   [[maybe_unused]] clock_count_t time_moment) {}
-	virtual void output([[maybe_unused]] event_t &&ev = {});
+	virtual void output(base_worker_t &worker, [[maybe_unused]] event_t &&ev);
 
 	neuro_node_t &operator=(const neuro_node_t &other)
 	{
@@ -160,7 +163,7 @@ struct actuator_node_t : neuro_node_t
 	clock_circular_buffer clocks;
 	// using neuro_node_t::neuro_node_t;
 	potential_t input(event_t &&e) override final;
-	void output([[maybe_unused]] event_t &&ev = {}) override final;
+	void output([[maybe_unused]] base_worker_t &worker, [[maybe_unused]] event_t &&ev) override final;
 	unsigned value();
 	actuator_node_t() : neuro_node_t::neuro_node_t() {}
 
@@ -194,27 +197,29 @@ struct eyes_optics_t
 {
 
 	scene_t *pscene;
-	std::pair<unsigned, unsigned> upper_left;
-	unsigned width;
-	unsigned heigth;
+	layer_dim_t left;
+	layer_dim_t top;
+	layer_dim_t right;
+	layer_dim_t bottom;
 	scene_t prev_view;
 
-	void set_focus(unsigned _width, unsigned _heigth)
-	{
-		width = _width;
-		heigth = _heigth;
-	}
+	void set_focus(int _left, int _top, layer_dim_t _width, layer_dim_t _heigth);
 
-	void look_at(scene_t *_pscene, std::pair<unsigned, unsigned> _upper_left = {0, 0});
+	void look_at(scene_t *_pscene, layer_dim_t _left = 0, layer_dim_t _top = 0);
 
-	void shift(point_t dir, float dist);
+	void shift(int dx, int dy, float dist);
 
 	void saccade(float dist);
 
-	eyes_optics_t(unsigned width = view_field_def_width,
-				  unsigned heigth = view_field_def_heigth) : upper_left{0, 0},
-															 width(width),
-															 heigth(heigth) {}
+	eyes_optics_t(layer_dim_t width = view_field_def_width,
+				  layer_dim_t heigth = view_field_def_heigth) : left{0}, top{0},
+																right(width - 1),
+																bottom(heigth - 1)
+	{
+		for (layer_dim_t i = 0; i < width; i++)
+			for (layer_dim_t j = 0; j < heigth; j++)
+				prev_view[i][j] = 0;
+	}
 };
 
 // Layers------------------------------------------------
@@ -239,6 +244,7 @@ using layers_t = std::vector<std::shared_ptr<layer_t>>;
 template <typename T>
 concept Is_layer = std::is_base_of_v<layer_t, T>;
 
+
 template <Is_layer T>
 void create_neurons(T *layer, layer_dim_t rows, layer_dim_t cols);
 
@@ -259,13 +265,21 @@ struct cortex_layer_t : layer_t
 
 inline std::vector<cortex_node_t> cortex_layer_t ::neurons_storage;
 
+
+
+
 struct retina_layer_t : layer_t
 {
+	struct worker : base_worker_t
+	{
+		worker : base_worker_t(0) {}
+		void worker(const retina_layer_t &layer) override final;
+	};
+
 	using node_t = retina_node_t;
 	std::shared_ptr<eyes_optics_t> p_eyes_optics;
 	static std::vector<retina_node_t> neurons_storage;
 	static std::atomic<bool> moving_look;
-	static void worker();
 	node_t &node_ref(layer_dim_t row, layer_dim_t col) override final
 	{
 		return neurons_storage.at(neurons.at(row).at(col));
@@ -327,7 +341,33 @@ struct events_set
 	events_set(events_set &&other) : buf{other.buf}, rmutex() {}
 };
 
+// Workers ------------------------------------------------
+struct base_worker_t
+{
+	unsigned id;
+	ThreadSafeQueue<event_t> input_events;
+	std::thread thread;
+	virtual void worker([[maybe_unused]] const retina_layer_t &layer) = 0;
+	base_worker_t(unsigned id) : id(id)
+	{
+		thread = std::thread(&base_worker_t::worker, this, id);
+	}
+	~base_worker_t()
+	{
+		thread.join();
+	}
+};
+
+
+
+struct internal_layer_worker_t : base_worker_t
+{
+	internal_layer_worker_t(unsigned id) : base_worker_t(id) {}
+	void worker([[maybe_unused]] const retina_layer_t &layer) override final;
+};
+
 // Head ------------------------------------------------
+
 
 struct head_t
 {
@@ -335,7 +375,6 @@ struct head_t
 	retina_layer_t *pretina;
 	std::shared_ptr<eyes_optics_t> p_eyes_optics;
 	net_timer_t net_timer;
-	std::vector<events_set> events;
 	const clock_count_t stdp_delay = 5L;
 
 	std::vector<std::thread> threads;
@@ -349,14 +388,14 @@ struct head_t
 	{
 		if (layers[0]->type == TNN::RETINA)
 			std::static_pointer_cast<retina_layer_t>(layers[0])->moving_look = true;
-		p_eyes_optics->look_at(pscene);
+		p_eyes_optics->look_at(pscene, 0, 0);
 		if (layers[0]->type == TNN::RETINA)
 			std::static_pointer_cast<retina_layer_t>(layers[0])->moving_look = false;
 	}
 
-	void set_focus(unsigned width, unsigned heigth)
+	void set_focus(unsigned width, unsigned heigth, int left, int top)
 	{
-		p_eyes_optics->set_focus(width, heigth);
+		p_eyes_optics->set_focus(width, heigth, left, top);
 	}
 
 	void saccade(float dist)
@@ -364,16 +403,13 @@ struct head_t
 		p_eyes_optics->saccade(dist);
 	}
 
-	void put_event(event_t &&event);
 	void wake_up(scene_t *pscene, unsigned width, unsigned heigth);
 	void do_sleep();
-	void print_events();
 	void print_output(layer_dim_t layer_num);
 	head_t();
 };
 
 inline std::shared_ptr<head_t> phead;
-inline std::atomic<unsigned long long int> nof_events = 0;
 
 // Openers --------------------------------------------------
 
@@ -400,3 +436,6 @@ struct print_weights_t
 	}
 };
 inline print_weights_t print_weights;
+
+// Global Tracer --------------------------------------------------
+inline std::shared_ptr<tracer_t> ptracer;

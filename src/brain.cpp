@@ -12,82 +12,62 @@
 
 using namespace TNN;
 // Nodes ------------------------------------------------------------------
-void neuro_node_t::output([[maybe_unused]] event_t &&ev)
-{
-  phead->put_event(std::move(ev));
-
-  nof_events.fetch_add(1, std::memory_order_relaxed);
-  ptracer->update(ev.source_addr);
-}
-
-/*************  ✨ Codeium Command ⭐  *************/
-/**
- * @brief Processes an output event for the actuator node.
- *
- * This function captures the current network time and stores it in a circular buffer.
- * It ensures that only events within a specified time window (actuator_tau) are retained
- * by removing older timestamps from the buffer.
- *
- * @param ev An optional event parameter that is not used in this function.
- */
-
-/******  9eb5d012-4139-4542-80dd-dfc7dc3e2054  *******/ void actuator_node_t::output([[maybe_unused]] event_t &&ev)
-{
-  auto t = phead->net_timer.time();
-  clocks.push(t);
-  while (clocks.peek() < t - actuator_tau)
-    clocks.pop();
-}
-
 unsigned actuator_node_t::value()
 {
   return clocks.size();
 }
 
-// Optics ------------------------------------------------------------------
-void eyes_optics_t::shift(point_t dir, float dist)
+int ajust_boundaries(int coord, const int left_b, const int right_b)
 {
-  int x_proj = upper_left.first + dir.first * dist;
-  x_proj = x_proj < 0 ? 0 : x_proj;
-  upper_left.first = x_proj >= static_cast<int>((*pscene).size()) ? (*pscene).size() - 1
-                                                                  : x_proj;
-
-  auto x_right = upper_left.first + width;
-  width = x_right < (*pscene).size() ? x_right : (*pscene).size() - upper_left.first - 1;
-
-  int y_proj = upper_left.second + dir.second * dist;
-  y_proj = y_proj < 0 ? 0 : y_proj;
-  upper_left.second = y_proj >= static_cast<int>((*pscene)[0].size()) ? (*pscene)[0].size() - 1
-                                                                      : y_proj;
-
-  auto y_right = upper_left.second + heigth;
-  heigth = y_right < (*pscene)[0].size() ? y_right
-                                         : (*pscene)[0].size() - upper_left.second - 1;
-  // DN(upper_left.first);
-  // DN(upper_left.second);
-  // DN(width);
-  // DN(heigth);
-  // ND;
+  int res;
+  res = coord;
+  if (res < left_b)
+    res = left_b;
+  if (res > right_b)
+    res = right_b;
+  return res;
 }
 
-void eyes_optics_t::look_at(scene_t *_pscene, std::pair<unsigned, unsigned> _upper_left)
+// Optics ------------------------------------------------------------------
+void eyes_optics_t::shift(int dx, int dy, float dist)
 {
-  // DN(__PRETTY_FUNCTION__);
+  assert(dist > 0);
+  int delta_x = dx * dist;
+  int delta_y = dy * dist;
+  left += delta_x;
+  right += delta_x;
+  top += delta_y;
+  bottom += delta_y;
+}
+
+void eyes_optics_t::set_focus(int _left, int _top, layer_dim_t _width, layer_dim_t _heigth)
+{
+  left = _left;
+  top = _top;
+  right = left + _width - 1;
+  bottom = top + _heigth - 1;
+}
+
+void eyes_optics_t::look_at(scene_t *_pscene, layer_dim_t _left, layer_dim_t _top)
+{
   pscene = _pscene;
-  upper_left = _upper_left;
-  set_focus(width, heigth);
-  print_image(pscene);
+  set_focus(_left, _top, (*pscene)[0].size(), (*pscene).size());
+  // DF(print_image(pscene));
 }
 
 void eyes_optics_t::saccade(float dist)
 {
   std::random_device rd;
   std::mt19937 gen(rd());
-  std::uniform_real_distribution<> w(0, dist);
-  const point_t dir[4] = {{1, 0}, {0, 1}, {-1, 0}, {0, -1}};
+  std::uniform_real_distribution<> w(1, dist);
+  const std::pair<int, int> dir[] = {{0, 1}, {0, -1}, {1, 0}, {1, 1}, //
+                                     {1, -1},
+                                     {-1, 1},
+                                     {-1, -1},
+                                     {-1, 0}};
   dist = w(gen);
-  point_t pdir = dir[rand() % 4];
-  shift(pdir, dist);
+  auto pdir = dir[rand() % (sizeof(dir) / sizeof(dir[0]))];
+  shift(pdir.first, pdir.second, dist);
 }
 
 // Layer's constructors ------------------------------------------------
@@ -171,18 +151,13 @@ void mnist_couch_layer_t::set_label(layer_dim_t i_label)
   neurons_storage[label].u_mem = 1.0;
 }
 
-// Head ------------------------------------------------
+// Head constructors ------------------------------------------------
 head_t::head_t()
 {
   p_eyes_optics = std::make_shared<eyes_optics_t>();
 
-  // nof_event_threads = std::thread::hardware_concurrency() / 2 - 1;
-  nof_event_threads = 2;
-
-  for (unsigned i = 0; i < nof_event_threads; ++i)
-  {
-    events.emplace_back(events_cirular_buffer_size);
-  }
+  nof_event_threads = std::thread::hardware_concurrency() / 2 - 1;
+  // nof_event_threads = 2;
 }
 
 // Updates------------------------------------------------
@@ -209,11 +184,25 @@ potential_t couch_node_t::input(event_t &&e)
   return e.target_addr.ref().u_mem * leak_alpha;
 }
 
-void update_final_potential(event_t &&e)
+void neuro_node_t::output(base_worker_t &worker, [[maybe_unused]] event_t &&ev)
+{
+  worker.events.enqueue(std::move(ev));
+  ptracer->update(ev.source_addr);
+}
+
+void actuator_node_t::output([[maybe_unused]] base_worker_t &worker, [[maybe_unused]] event_t &&ev)
+{
+  auto t = phead->net_timer.time();
+  clocks.push(t);
+  while (clocks.peek() < t - actuator_tau)
+    clocks.pop();
+}
+
+void update_final_potential(base_worker_t &worker, event_t &&e)
 {
   auto time_moment = phead->net_timer.time();
   auto &trg = e.target_addr.ref();
-  trg.busy.lock();
+  std::lock_guard<atomic_mutex> guard(trg.busy);
   // Add input
   auto u = trg.u_mem * (1 - leak_alpha) + trg.input(std::forward<event_t>(e));
 
@@ -228,26 +217,25 @@ void update_final_potential(event_t &&e)
     trg.last_fired = time_moment;
 
     // afferr_synapse->last_fired = time_moment;
-    trg.output();
+    trg.output(worker, std::forward<event_t>(e));
     u_res = u_rest;
     // cur_distance = afferr_synapse->delay;
   }
 
   trg.u_mem = u_res;
 
-  // if (e.target_addr.layer == 3 && e.source_addr.layer == 4 /*&& e.src_synapse == 5*/)
-  //   std::cout << "Umem: " << trg.u_mem << '\n';
-  trg.update_params(std::forward<event_t>(e), time_moment);
-  trg.busy.unlock();
+  if (e.target_addr.layer != 0)
+    trg.update_params(std::forward<event_t>(e), time_moment);
 }
 
-void update_potential(event_t &&e)
+void update_potential(base_worker_t &worker, event_t &&e)
 {
   auto time_moment = phead->net_timer.time();
   auto &trg = e.target_addr.ref();
-  trg.busy.lock();
+
+  std::lock_guard<atomic_mutex> guard(trg.busy);
   // Add input
-  auto u = trg.u_mem * (1 - leak_alpha) + trg.input(std::forward<event_t>(e));
+  auto u = trg.u_mem * (1 - leak_alpha) + trg.input(std::forward<event_t>(e)) * static_cast<clock_count_t>(e.ferment);
 
   potential_t u_res = 0;
   if (u < trg.threshold)
@@ -268,10 +256,10 @@ void update_potential(event_t &&e)
           e.target_addr,
           static_cast<layer_dim_t>(afferr_synapse - trg.synapses.begin()),
           tg,
-          time_moment + afferr_synapse->delay, 0};
+          time_moment + afferr_synapse->delay, afferr_synapse->ferment, 0};
 
       // afferr_synapse->last_fired = time_moment;
-      trg.output(std::move(ev));
+      trg.output(worker, std::move(ev));
 
       // cur_distance = afferr_synapse->delay;
     }
@@ -282,7 +270,6 @@ void update_potential(event_t &&e)
   // if (e.target_addr.layer == 3 && e.source_addr.layer == 4 /*&& e.src_synapse == 5*/)
   //   std::cout << "Umem: " << trg.u_mem << '\n';
   trg.update_params(std::forward<event_t>(e), time_moment);
-  trg.busy.unlock();
 }
 
 void cortex_node_t::update_params(event_t &&e, clock_count_t time_moment)
@@ -300,17 +287,17 @@ void head_t::wake_up(scene_t *pscene, unsigned width, unsigned heigth)
 {
   // Init eyes
   look_at(pscene);
-  set_focus(width, heigth);
+  set_focus(0, 0, width, heigth);
 
   // Init threads
   finish.store(false);
   threads.resize(nof_event_threads);
 
   // Start threads
-  threads[0] = std::move(std::thread(&input_layers_worker));
+  threads[0] = std::thread(&input_layers_worker);
   for (unsigned i = 1; i < nof_event_threads; ++i)
   {
-    threads.at(i) = std::move(std::thread(&internal_layer_worker, i));
+    threads.at(i) = std::thread(&internal_layer_worker, i);
   }
 }
 
@@ -333,38 +320,47 @@ void head_t::do_sleep()
 }
 
 // Input Layers Workers---------------------------------------------------
+//
+void worker
 
-void retina_layer_t::worker()
+void io_worker_t::worker(const retina_layer_t &layer)
 {
 
-  if (moving_look.load())
+  if (layer.moving_look.load())
     return;
-  auto max_row = static_cast<layer_dim_t>(phead->p_eyes_optics->upper_left.first + phead->p_eyes_optics->width - 1);
-  auto max_col = static_cast<layer_dim_t>(phead->p_eyes_optics->upper_left.second + phead->p_eyes_optics->heigth - 1);
-  auto &prev = phead->p_eyes_optics->prev_view;
+  auto &neurons = phead->layers[0]->neurons;
+  auto optics = phead->p_eyes_optics;
+
+  auto left_b = std::max(static_cast<int>(optics->left), 0);
+  auto right_b = std::min(static_cast<int>(optics->right), static_cast<int>(neurons[0].size() - 1));
+  auto top_b = std::max(static_cast<int>(optics->top), 0);
+  auto bottom_b = std::min(static_cast<int>(optics->bottom), static_cast<int>(neurons.size() - 1));
+
+  // float x_factor = neurons[0].size() / (right_b - left_b + 1);
+  // float y_factor = neurons.size() / (bottom_b - top_b + 1);
+  auto &prev = optics->prev_view;
+  auto &scene = *optics->pscene;
 
   // Prepare cicle
-  auto prev_eye_row = phead->p_eyes_optics->upper_left.first;
-  layer_dim_t neuro_row = prev_eye_row;
-
-  auto &scene = *phead->p_eyes_optics->pscene;
-  for (layer_dim_t row = prev_eye_row;
-       row <= max_row;
-       row++, prev_eye_row++, neuro_row++)
+  for (layer_dim_t eye_row = left_b;
+       eye_row <= right_b;
+       eye_row++)
   {
-    auto prev_eye_col = phead->p_eyes_optics->upper_left.second;
-    auto neuro_col = prev_eye_col;
+    layer_dim_t neuro_row = (eye_row - left_b); //* y_factor;
 
-    for (layer_dim_t col = prev_eye_col;
-         col <= max_col;
-         col++, prev_eye_col++, neuro_col++)
+    for (layer_dim_t eye_col = top_b;
+         eye_col <= bottom_b;
+         eye_col++)
     {
-      auto delta_curr = scene[row][col] - prev[row][col];
+      layer_dim_t neuro_col = (eye_col - top_b); //* x_factor;
+      auto delta_curr = abs(scene[eye_row][eye_col] - prev[eye_row][eye_col]);
 
-      if (abs(delta_curr) >= visual_detector_threshold)
+      if (delta_curr >= visual_detector_threshold)
       {
-        update_potential({{0, 0, 0}, 0, {0, row, col}, 0L, delta_curr});
-        prev[row][col] = scene[row][col];
+        event_t e{{-1, eye_row, eye_col}, 0, {0, neuro_row, neuro_col}, 0L, TNN::DOPHAMINE, delta_curr};
+        auto &trg = e.target_addr.ref();
+        trg.output(this, std::move(e));
+        prev[eye_row][eye_col] = scene[eye_row][eye_col];
       }
     }
   }
@@ -380,10 +376,12 @@ void mnist_couch_layer_t::worker()
     for (layer_dim_t j = 0; j < static_cast<layer_dim_t>(neurons[i].size()); ++j)
     {
       auto &src_ref = phead->layers.back()->node_ref(i, j);
+      layer_dim_t synapse_index = 0;
       update_final_potential({{layer_num, i, j},
-                              0, // one synapse per every neuron
-                              src_ref.synapses[0].target_addr,
+                              synapse_index, // one synapse per every neuron
+                              src_ref.synapses[synapse_index].target_addr,
                               phead->net_timer.time(),
+                              src_ref.synapses[synapse_index].ferment,
                               1});
     }
   }
@@ -392,7 +390,7 @@ void mnist_couch_layer_t::worker()
   // neurons_storage[label].u_mem = 1.0;
 }
 
-void input_layers_worker()
+void input_layers_worker([[maybe_unused]] const retina_layer_t &layer)
 {
   while (!phead->finish.load())
   {
@@ -402,45 +400,25 @@ void input_layers_worker()
 }
 
 // Internal Layers Worker---------------------------------------------------
-
-void internal_layer_worker([[maybe_unused]] unsigned id)
+//
+void internal_layer_worker_t::worker([[maybe_unused]] const retina_layer_t &layer)
 {
   while (!phead->finish.load())
   {
-
-    if (!phead->events.empty())
+    if (!events.empty())
     {
-      if (!phead->events[id].buf.empty())
-      {
-
-        auto e = phead->events[id].buf.front();
-
-        phead->events[id].rmutex.lock();
-        phead->events[id].buf.pop_front();
-        phead->events[id].rmutex.unlock();
-        update_potential(std::move(e));
-      }
+      auto e = events.front();
+      events.dequeue();
+      update_potential(std::move(e));
     }
   }
 }
 
 // Events processing------------------------------------------------
-void head_t::put_event(event_t &&event)
-{
-  event.time_of_arrival = phead->net_timer.time();
-  auto ind = event_index.fetch_add(1, std::memory_order_relaxed);
-  if (ind >= events.size())
-  {
-    ind = 0;
-    event_index.store(ind, std::memory_order_relaxed);
-  }
-  events[ind].wmutex.lock();
-  events[ind].buf.push_back(event);
-  // print_events();
-  events[ind].wmutex.unlock();
-}
+//
 
-// Printing------------------------------------------------
+// Printing---------------------------------------------------------------
+//
 void print_image(scene_t *pscene)
 {
   for (auto i = 0; i < 28; ++i)
@@ -450,15 +428,6 @@ void print_image(scene_t *pscene)
     std::cout << std::endl;
   }
 }
-void head_t::print_events()
-{
-  for (unsigned i = 0; i < events.size(); ++i)
-  {
-
-    std::cout << events[i].buf.size() << " ";
-  }
-  std::cout << std::endl;
-}
 
 void head_t::print_output(layer_dim_t layer_num)
 {
@@ -466,15 +435,17 @@ void head_t::print_output(layer_dim_t layer_num)
   {
     for (size_t j = 0; j < layers.at(layer_num)->neurons[i].size(); ++j)
     {
-      std::cout << std::dynamic_pointer_cast<actuator_layer_t>(layers.at(layer_num))->node_ref(i, j).value() << " ";
+      std::cout << std::dynamic_pointer_cast<actuator_layer_t> //
+                   (layers.at(layer_num))->node_ref(i, j).value()
+                << " ";
     }
     std::cout << std::endl;
   }
 }
 
 // Openers----------------------------------------------------------------
-neuro_node_t &
-neuron_address_t::ref()
+
+neuro_node_t &neuron_address_t::ref()
 {
   auto &_layer = *(phead->layers.at(layer));
   return _layer.node_ref(row, col);

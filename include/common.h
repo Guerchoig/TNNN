@@ -38,6 +38,15 @@ using distance_t = unsigned char;
 using clock_count_t = long long; // 1,84E+19,
                                  // negative value means the time have already been processed
 constexpr size_t mnist_size = 28;
+
+struct rgba_t
+{
+    std::uint8_t r;
+    std::uint8_t g;
+    std::uint8_t b;
+    std::uint8_t a;
+};
+
 using scene_t = std::array<std::array<scene_signal_t, mnist_size>, mnist_size>;
 using scenes_t = std::vector<scene_t>;
 
@@ -52,17 +61,6 @@ struct neuron_address_t
     layer_dim_t col;
     neuro_node_t &ref();
 };
-
-struct event_t
-{
-    neuron_address_t source_addr;
-    layer_dim_t src_synapse; // synapse index
-    neuron_address_t target_addr;
-    clock_count_t time_of_arrival;
-    int signal; // Only for detector
-};
-
-constexpr size_t events_cirular_buffer_size = 50;
 
 namespace TNN
 {
@@ -90,6 +88,20 @@ namespace TNN
     };
 
 }
+
+struct event_t
+{
+    neuron_address_t source_addr;
+    layer_dim_t src_synapse; // synapse index
+    neuron_address_t target_addr;
+    clock_count_t time_of_arrival;
+    TNN::ferment_t ferment;
+    int signal; // Only for detector
+};
+
+constexpr size_t events_cirular_buffer_size = 50;
+
+
 std::ostream &operator<<(std::ostream &os, TNN::layer_type t);
 std::istream &operator>>(std::istream &is, TNN::layer_type &t);
 
@@ -147,8 +159,6 @@ struct net_timer_t
         return static_cast<layer_dim_t>(cur_time % time_steps);
     }
 };
-
-
 
 void print_couch();
 inline unsigned nof_event_threads = 0;

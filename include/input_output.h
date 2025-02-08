@@ -5,6 +5,8 @@
 #include <utility>
 #include <tuple>
 #include <iostream>
+#include <vector>
+#include <memory>
 
 constexpr char data_dir[] = "../data/";
 

@@ -184,11 +184,6 @@ potential_t couch_node_t::input(event_t &&e)
   return e.target_addr.ref().u_mem * leak_alpha;
 }
 
-void neuro_node_t::output(base_worker_t &worker, [[maybe_unused]] event_t &&ev)
-{
-  worker.events.enqueue(std::move(ev));
-  ptracer->update(ev.source_addr);
-}
 
 void actuator_node_t::output([[maybe_unused]] base_worker_t &worker, [[maybe_unused]] event_t &&ev)
 {

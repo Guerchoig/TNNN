@@ -1,6 +1,6 @@
 #pragma once
 #include "common.h"
-#include "tread_safe_queue.h"
+#include <atomic_queue.h>
 #include <SFML/Graphics.hpp>
 #include <SFML/Window.hpp>
 #include <array>
@@ -18,8 +18,8 @@ namespace tr
     constexpr int label_len = 150;
     constexpr float decrease = 0.001;
     constexpr std::uint8_t transparent = 0xFF;
-    constexpr unsigned nof_layers = 7;
-    constexpr unsigned scene_width = 28;
+    constexpr unsigned nof_layers = 5;
+    constexpr unsigned scene_width = mnist_size;
     constexpr unsigned magnification = 9;
     constexpr std::uint8_t no_attenuation = 0xFF;
 
@@ -27,13 +27,12 @@ namespace tr
 }
 
 
-struct phead;
 struct tracer_t
 {
     const sf::Color text_fill_color = sf::Color::Green;
     unsigned h_resolution;
     unsigned v_resolution;
-    unsigned vidjets_in_row;
+    unsigned vidgets_in_row;
     std::atomic<unsigned long long int> nof_events = 0;
     std::array<const scene_t *, 2> scenes; // scene, prev_scene
 
@@ -51,7 +50,8 @@ struct tracer_t
     std::array<std::string, 1> strings = {{""}};
 
     // drawing queue
-    ThreadSafeQueue<std::pair<neuron_address_t, unsigned long long int>> queue;
+
+    atomic_queue::AtomicQueue2<std::pair<neuron_address_t, unsigned long long int>, 1000> queue;
 
     // std::mutex m;
 
@@ -77,7 +77,7 @@ struct tracer_t
                 for (unsigned k = 0; k < tr::scene_width; ++k)
                     colors.at(i).at(j).at(k).a = tr::no_attenuation;
 
-        vidjets_in_row = (h_resolution - tr::left_margin) / (tr::inter_sells + tr::scene_width * tr::magnification);
+        vidgets_in_row = (h_resolution - tr::left_margin) / (tr::inter_sells + tr::scene_width * tr::magnification);
         tr::window.create(sf::VideoMode(h_resolution, v_resolution), "TNNN tracer");
 
         sprites_texture.create(tr::scene_width, tr::scene_width * tr::nof_layers);
@@ -85,8 +85,8 @@ struct tracer_t
         for (unsigned i = 0; i < tr::nof_layers; ++i)
         {
             // Draw vidget
-            auto xpos = tr::left_margin + (i % vidjets_in_row) * (tr::scene_width * tr::magnification + tr::inter_sells);
-            auto ypos = tr::top_margin + (i / vidjets_in_row) * (tr::scene_width * tr::magnification + tr::inter_sells);
+            auto xpos = tr::left_margin + (i % vidgets_in_row) * (tr::scene_width * tr::magnification + tr::inter_sells);
+            auto ypos = tr::top_margin + (i / vidgets_in_row) * (tr::scene_width * tr::magnification + tr::inter_sells);
             sprites.at(i).setPosition(xpos, ypos);
             sprites.at(i).setTexture(sprites_texture);
             sprites.at(i).setTextureRect(sf::IntRect(0, i * tr::scene_width, tr::scene_width, tr::scene_width));
@@ -118,19 +118,17 @@ struct tracer_t
 
     void update([[maybe_unused]] const neuron_address_t &addr)
     {
-        queue.enqueue({addr, nof_events.fetch_add(1, std::memory_order_relaxed)});
+        if(!queue.try_push(std::pair<neuron_address_t, unsigned long long int>(addr, nof_events.fetch_add(1, std::memory_order_relaxed))))
+            throw std::runtime_error("Tracer: queue is full");
     }
 
     void show()
     {
         tr::window.setActive(true);
-
-        // while (!queue.empty())
-        if (!queue.empty())
+        std::pair<neuron_address_t, unsigned long long int> item;
+        while (queue.try_pop(item))
         {
             tr::window.clear(sf::Color::Black);
-
-            auto item = queue.dequeue();
 
             // update scene & prev scene
             for (unsigned j = 0; j < tr::scene_width; ++j)
@@ -169,9 +167,8 @@ struct tracer_t
                 tr::window.draw(ltexts.at(i));
                 tr::window.draw(texts.at(i));
             }
-
-            tr::window.display();
-            tr::window.setActive(false);
         }
+        tr::window.display();
+        tr::window.setActive(false);
     }
 };

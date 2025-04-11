@@ -52,8 +52,8 @@ void create_net(const network_descr_t &dsc);
 std::ostream &operator<<(std::ostream &os, const synapse_t &s);
 std::istream &operator>>(std::istream &is, synapse_t &s);
 
-std::ostream &operator<<(std::ostream &os, const neuro_node_t &s);
-std::istream &operator>>(std::istream &is, neuro_node_t &s);
+std::ostream &operator<<(std::ostream &os, const neuron_t &s);
+std::istream &operator>>(std::istream &is, neuron_t &s);
 
 std::ostream &operator<<(std::ostream &os, const layer_t &layer);
 std::istream &operator>>(std::istream &is, layer_t &layer);

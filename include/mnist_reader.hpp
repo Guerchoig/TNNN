@@ -77,11 +77,11 @@ namespace mnist
      * \param images The container to fill with the images
      * \param path The path to the image file
      * \param limit The maximum number of elements to read (0: no limit)
-     * \param start The elements to ignore at the beginning
+     * \param work The elements to ignore at the beginning
      * \param func The functor to create the image object
      */
     template <typename Container>
-    bool read_mnist_image_file_flat(Container &images, const std::string &path, std::size_t limit, std::size_t start = 0)
+    bool read_mnist_image_file_flat(Container &images, const std::string &path, std::size_t limit, std::size_t work = 0)
     {
         auto buffer = read_mnist_file(path, 0x803);
 
@@ -101,8 +101,8 @@ namespace mnist
                 count = static_cast<unsigned int>(limit);
             }
 
-            // Ignore "start" first elements
-            image_buffer += start * (rows * columns);
+            // Ignore "work" first elements
+            image_buffer += work * (rows * columns);
 
             for (size_t i = 0; i < count; ++i)
             {
@@ -241,10 +241,10 @@ namespace mnist
      * \param labels The container to fill with the labels
      * \param path The path to the label file
      * \param limit The maximum number of elements to read (0: no limit)
-     * \param start The elements to avoid at the beginning
+     * \param work The elements to avoid at the beginning
      */
     template <typename Container>
-    bool read_mnist_label_file_categorical(Container &labels, const std::string &path, std::size_t limit = 0, std::size_t start = 0)
+    bool read_mnist_label_file_categorical(Container &labels, const std::string &path, std::size_t limit = 0, std::size_t work = 0)
     {
         auto buffer = read_mnist_file(path, 0x801);
 
@@ -262,8 +262,8 @@ namespace mnist
                 count = static_cast<unsigned int>(limit);
             }
 
-            // Ignore "start" first elements
-            label_buffer += start;
+            // Ignore "work" first elements
+            label_buffer += work;
 
             for (size_t i = 0; i < count; ++i)
             {

@@ -8,7 +8,19 @@
 #include <cmath>
 #include <unordered_map>
 #include <string>
+#include <cmath>
 using namespace TNN;
+
+constexpr auto sqr(auto &&x) noexcept(noexcept(x * x)) -> decltype(x * x)
+{
+    return x * x;
+}
+double calc_delay(neuron_address_t src,
+                  neuron_address_t trg)
+{
+    clock_count_t res = round(spike_velocity * std::sqrt(sqr(src.layer - trg.layer) + sqr(src.row - trg.row) + sqr(src.col - trg.col)));
+    return res;
+}
 
 void create_synapses_between_2_layers(neuron_address_t src,
                                       neuron_address_t trg,
@@ -75,11 +87,14 @@ void create_connections(const conn_descr_coll_t &descriptions)
             {
                 auto src_col = static_cast<layer_dim_t>(it_col - it_row->begin());
                 auto trg_col = static_cast<layer_dim_t>(std::round(src_col * col_ratio));
+                clock_count_t delay = dsc->delay;
+                if (delay == 0)
+                    delay = calc_delay({dsc->src_layer, src_row, src_col}, {dsc->trg_layer, trg_row, trg_col});
                 create_synapses_between_2_layers({dsc->src_layer, src_row, src_col},
                                                  {dsc->trg_layer, trg_row, trg_col},
                                                  dsc->ferment,
                                                  dsc->radius,
-                                                 dsc->delay);
+                                                 delay);
             }
         }
     }
@@ -103,6 +118,7 @@ void create_net(const network_descr_t &dsc)
 {
     create_layers(dsc);
     phead->pretina = static_cast<retina_layer_t *>(phead->layers[0].get());
+    phead->pretina->p_eyes_optics = phead->p_eyes_optics;
     create_connections(dsc.conn_descriptions);
 }
 
@@ -156,7 +172,7 @@ std::istream &operator>>(std::istream &is, synapse_t &s)
     return is;
 }
 
-std::ostream &operator<<(std::ostream &os, const neuro_node_t &s)
+std::ostream &operator<<(std::ostream &os, const neuron_t &s)
 {
     os << "umem: " << s.u_mem << " threshold: " << s.threshold << " lastfired: " << s.last_fired;
     os << " synum: " << s.synapses.size() << std::endl;
@@ -165,7 +181,7 @@ std::ostream &operator<<(std::ostream &os, const neuro_node_t &s)
     return os;
 }
 
-std::istream &operator>>(std::istream &is, neuro_node_t &s)
+std::istream &operator>>(std::istream &is, neuron_t &s)
 {
     int dumm;
     std::string dumm_str;
@@ -193,7 +209,7 @@ std::istream &operator>>(std::istream &is, neuro_node_t &s)
 std::ostream &operator<<(std::ostream &os, const layer_t &layer)
 {
     const char *types[5]{"NOLAYER\0", "RETINA\0", "CORTEX\0", "COUCHING\0", "ACTUATOR\0"};
-    os << types[layer.type] << std::endl
+    os << types[layer.ltype] << std::endl
        << "ROWS: " << layer.neurons.size() << " "; // type & rows
     for (unsigned i = 0;
          i < layer.neurons.size();
@@ -203,7 +219,7 @@ std::ostream &operator<<(std::ostream &os, const layer_t &layer)
         for (unsigned j = 0;
              j < layer.neurons[i].size(); ++j)
         {
-            os << " " << i << " " << j << " " << std::remove_cv_t<layer_t &>(layer).node_ref(i, j) << std::endl;
+            os << " " << i << " " << j << " " << std::remove_cv_t<layer_t &>(layer).neuron_ref(i, j) << std::endl;
         }
     }
     return os;
@@ -228,12 +244,8 @@ std::istream &operator>>(std::istream &is, T &layer)
         layer.neurons.back().reserve(nof_cols);
         for (layer_dim_t j = 0; j < nof_cols; ++j)
         {
-            layer.neurons_storage.emplace_back();
-            if (layer.neurons_storage.empty())
-                throw std::runtime_error("Couldn't emplace a neuron");
             layer.neurons.back().emplace_back();
-            layer.neurons.back().back() = layer.neurons_storage.size() - 1;
-            is >> layer.node_ref(i, j);
+            is >> layer.neuron_ref(i, j);
         }
     }
     return is;
@@ -251,28 +263,28 @@ std::ostream &operator<<(std::ostream &os, const head_t &h)
 }
 
 template <typename T>
-std::shared_ptr<layer_t> emplace_layer_create_neurons(layer_dim_t rows, layer_dim_t cols, TNN::layer_type _type)
+std::shared_ptr<layer_t> emplace_layer_create_neurons(layer_dim_t rows, layer_dim_t cols)
 {
-    return phead->layers.emplace_back(std::make_shared<T>(rows, cols, _type));
+    return phead->layers.emplace_back(std::make_shared<T>(rows, cols));
 }
 
-std::shared_ptr<layer_t> create_layer_neurons(TNN::layer_type type, layer_dim_t rows, layer_dim_t cols)
+std::shared_ptr<layer_t> create_layer_neurons(TNN::layer_type ltype, layer_dim_t rows, layer_dim_t cols)
 {
     std::shared_ptr<layer_t> l;
-    switch ((int)type)
+    switch ((int)ltype)
     {
     case TNN::RETINA:
-        l = emplace_layer_create_neurons<retina_layer_t>(rows, cols, type);
+        l = emplace_layer_create_neurons<retina_layer_t>(rows, cols);
         break;
     case TNN::CORTEX:
-        l = emplace_layer_create_neurons<cortex_layer_t>(rows, cols, type);
+        l = emplace_layer_create_neurons<cortex_layer_t>(rows, cols);
         break;
     case TNN::COUCHING:
-        l = emplace_layer_create_neurons<mnist_couch_layer_t>(rows, cols, type);
+        l = emplace_layer_create_neurons<mnist_couch_layer_t>(rows, cols);
         break;
-    case TNN::ACTUATOR:
-        l = emplace_layer_create_neurons<actuator_layer_t>(rows, cols, type);
-        break;
+    // case TNN::ACTUATOR:
+    //     l = emplace_layer_create_neurons<actuator_layer_t>(rows, cols);
+    //     break;
     default:
         break;
     }
@@ -290,25 +302,28 @@ std::istream &operator>>(std::istream &is, head_t &h)
         TNN::layer_type type;
         is >> type;
 
-        std::shared_ptr<layer_t> l;
+        std::shared_ptr<layer_t> p_layer;
+        std::shared_ptr<retina_layer_t> rl;
         switch ((int)type)
         {
         case TNN::RETINA:
-            l = h.layers.emplace_back(std::make_shared<retina_layer_t>(type)); // emplace_layer_create_neurons<retina_layer_t>(rows, cols, type);
-            is >> *(std::dynamic_pointer_cast<retina_layer_t>(l));
-            h.pretina = std::dynamic_pointer_cast<retina_layer_t>(l).get();
+            h.layers.emplace_back(std::make_shared<retina_layer_t>());
+            p_layer = h.layers.back();
+            rl = std::static_pointer_cast<retina_layer_t>(p_layer);
+            is >> *(rl);
+            h.pretina = rl.get();
             break;
         case TNN::CORTEX:
-            l = h.layers.emplace_back(std::make_shared<cortex_layer_t>(type));
-            is >> *(std::dynamic_pointer_cast<cortex_layer_t>(l));
+            p_layer = h.layers.emplace_back(std::make_shared<cortex_layer_t>());
+            is >> *(std::static_pointer_cast<cortex_layer_t>(p_layer));
             break;
         case TNN::COUCHING:
-            l = h.layers.emplace_back(std::make_shared<mnist_couch_layer_t>(type));
-            is >> *(std::dynamic_pointer_cast<mnist_couch_layer_t>(l));
+            p_layer = h.layers.emplace_back(std::make_shared<mnist_couch_layer_t>());
+            is >> *(std::static_pointer_cast<mnist_couch_layer_t>(p_layer));
             break;
-        case TNN::ACTUATOR:
-            l = h.layers.emplace_back(std::make_shared<actuator_layer_t>(type));
-            break;
+        // case TNN::ACTUATOR:
+        //     l = h.layers.emplace_back(std::make_shared<actuator_layer_t>(type));
+        //     break;
         default:
             break;
         }

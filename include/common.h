@@ -36,9 +36,16 @@ using potential_t = double;
 using weight_t = double;
 using distance_t = unsigned char;
 using clock_count_t = long long; // 1,84E+19,
-                                 // negative value means the time have already been processed
+// negative value means the time have already been processed
+
+template <typename T>
+using vector_2D_t = std::vector<std::vector<T>>;
+
 constexpr size_t mnist_size = 28;
 
+/**
+ * @brief Represents a color with red, green, blue, and alpha (transparency) components
+ */
 struct rgba_t
 {
     std::uint8_t r;
@@ -52,14 +59,67 @@ using scenes_t = std::vector<scene_t>;
 
 using teach_signal_t = uint16_t;
 
-struct neuro_node_t;
+struct neuron_t;
 
-struct neuron_address_t
+/**
+ * @brief Represents a 3D address with layer, row, and column coordinates
+ */
+struct address_t
 {
     layer_dim_t layer;
     layer_dim_t row;
     layer_dim_t col;
-    neuro_node_t &ref();
+
+    bool operator<(const address_t &other) const
+    {
+        return std::tie(layer, row, col) < std::tie(other.layer, other.row, other.col);
+    }
+
+    bool operator==(const address_t &other) const
+    {
+        return std::tie(layer, row, col) == std::tie(other.layer, other.row, other.col);
+    }
+
+    address_t() {}
+    address_t(layer_dim_t l,
+              layer_dim_t r,
+              layer_dim_t c) : layer(l), row(r), col(c) {}
+};
+
+template <>
+struct std::hash<address_t>
+{
+    /*************  ✨ Codeium Command ⭐  *************/
+    /**
+     * @brief Hash function for address_t that combines the hashes of the layer, row, and column coordinates.
+     *
+     * This function computes a hash value for a given address_t object by using a combination of prime number
+     * multiplication and the built-in hash function for each coordinate (layer, row, col). The use of different
+     * prime numbers ensures a more uniform distribution of hash values, reducing the likelihood of collisions.
+     *
+     * @param n The address_t object to be hashed.
+     * @return size_t The computed hash value for the given address.
+     */
+
+    /******  be260060-316d-4383-ac5b-0c49c7e0c604  *******/
+    size_t operator()(const address_t &n) const noexcept
+    {
+        const size_t prime = 31;
+        size_t result = 17; // initial value
+
+        // Combine hashes of layer, row, and col
+        result = result * prime + hash<layer_dim_t>{}(n.layer);
+        result = result * prime + hash<layer_dim_t>{}(n.row);
+        result = result * prime + hash<layer_dim_t>{}(n.col);
+
+        return result;
+    }
+};
+
+struct neuron_address_t : address_t
+{
+    neuron_t &ref();
+    using address_t::address_t;
 };
 
 namespace TNN
@@ -89,7 +149,7 @@ namespace TNN
 
 }
 
-struct event_t
+struct neuron_event_t
 {
     neuron_address_t source_addr;
     layer_dim_t src_synapse; // synapse index
@@ -97,10 +157,33 @@ struct event_t
     clock_count_t time_of_arrival;
     TNN::ferment_t ferment;
     int signal; // Only for detector
+    neuron_event_t() {}
+    neuron_event_t(neuron_address_t source_addr,
+                   layer_dim_t src_synapse,
+                   neuron_address_t target_addr,
+                   clock_count_t time_of_arrival,
+                   TNN::ferment_t ferment,
+                   int signal) : source_addr(source_addr),
+                                 src_synapse(src_synapse),
+                                 target_addr(target_addr),
+                                 time_of_arrival(time_of_arrival),
+                                 ferment(ferment), signal(signal) {}
+};
+
+struct weight_event_t
+{
+    neuron_address_t addr;
+    layer_dim_t synapse_num;
+    clock_count_t spike_time;
+    weight_event_t() {}
+    weight_event_t(neuron_address_t addr,
+                   layer_dim_t synapse_num,
+                   clock_count_t spike_time) : addr(addr),
+                                               synapse_num(synapse_num),
+                                               spike_time(spike_time) {}
 };
 
 constexpr size_t events_cirular_buffer_size = 50;
-
 
 std::ostream &operator<<(std::ostream &os, TNN::layer_type t);
 std::istream &operator>>(std::istream &is, TNN::layer_type &t);
@@ -112,7 +195,6 @@ struct conn_descr_t
 {
     layer_dim_t src_layer;
     layer_dim_t trg_layer;
-    // layer_dim_t nof_synapses; // Nof synapses
     TNN::ferment_t ferment; // ferment (signed time of dissolution)
     layer_dim_t radius;
     clock_count_t delay;
@@ -120,34 +202,13 @@ struct conn_descr_t
 
 using conn_descr_coll_t = std::vector<conn_descr_t>;
 
-class atomic_mutex
-{
-    std::atomic_flag m_ = ATOMIC_FLAG_INIT;
-
-public:
-    void lock() noexcept
-    {
-        while (m_.test_and_set(std::memory_order_acquire))
-            m_.wait(true, std::memory_order_relaxed);
-    }
-    bool try_lock() noexcept
-    {
-        return !m_.test_and_set(std::memory_order_acquire);
-    }
-    void unlock() noexcept
-    {
-        m_.clear(std::memory_order_release);
-        m_.notify_all();
-    }
-};
-
 // max nof items in the events buffer
 constexpr layer_dim_t time_steps = 10000;
 
 struct net_timer_t
 {
-    std::chrono::time_point<std::chrono::high_resolution_clock> start;
-    net_timer_t() : start(std::chrono::high_resolution_clock::now()) {}
+    std::chrono::time_point<std::chrono::high_resolution_clock> work;
+    net_timer_t() : work(std::chrono::high_resolution_clock::now()) {}
     clock_count_t time()
     {
         return std::chrono::high_resolution_clock::now().time_since_epoch().count();
@@ -160,5 +221,5 @@ struct net_timer_t
     }
 };
 
-void print_couch();
+// void print_couch();
 inline unsigned nof_event_threads = 0;

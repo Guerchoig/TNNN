@@ -11,49 +11,60 @@ constexpr unsigned view_field_def_heigth = mnist_size;
 struct eyes_optics_t
 {
 
-    scene_t *pscene;
+    std::shared_ptr<scene_t> pscene;
     layer_dim_t left;
     layer_dim_t top;
     layer_dim_t right;
     layer_dim_t bottom;
-    std::atomic<bool> moving_gaze;
+    std::mutex moving_gaze;
+    void (*notify_scene_change)();
 
     void zoom(int _left, int _top, layer_dim_t _width, layer_dim_t _heigth)
     {
-        moving_gaze = true;
+        std::lock_guard<std::mutex> l(moving_gaze);
         left = _left;
         top = _top;
         right = left + _width - 1;
         bottom = top + _heigth - 1;
-        moving_gaze = false;
     }
 
     void shift(int dx, int dy, float dist)
     {
         assert(dist > 0);
-        moving_gaze = true;
+        std::lock_guard<std::mutex> l(moving_gaze);
         int delta_x = dx * dist;
         int delta_y = dy * dist;
         left += delta_x;
         right += delta_x;
         top += delta_y;
         bottom += delta_y;
-        moving_gaze = false;
     }
 
-    void set_scene(scene_t *_pscene)
+    void set_scene(std::shared_ptr<scene_t> _pscene)
     {
-        moving_gaze = true;
+        std::lock_guard<std::mutex> l(moving_gaze);
         pscene = _pscene;
-        moving_gaze = false;
+    }
+
+    std::shared_ptr<scene_t> get_locked_scene()
+    {
+        moving_gaze.lock();
+        auto res = std::shared_ptr<scene_t>(pscene);
+        return res;
+    }
+
+    void unlock_scene()
+    {
+        moving_gaze.unlock();
     }
 
     eyes_optics_t(layer_dim_t width = view_field_def_width,
-                  layer_dim_t heigth = view_field_def_heigth) : left{0}, top{0},
-                                                                right(width - 1),
-                                                                bottom(heigth - 1)
+                  layer_dim_t heigth = view_field_def_heigth,
+                  void (*_notify_scene_change)() = nullptr) : left{0}, top{0},
+                                                              right(width - 1),
+                                                              bottom(heigth - 1),
+                                                              notify_scene_change(_notify_scene_change)
     {
-        moving_gaze = false;
     }
 
     void saccade(float dist)
@@ -68,6 +79,6 @@ struct eyes_optics_t
                                            {-1, 0}};
         dist = w(gen);
         auto pdir = dir[rand() % (sizeof(dir) / sizeof(dir[0]))];
-        zoom(pdir.first*dist, pdir.second*dist, view_field_def_width, view_field_def_heigth);
+        zoom(pdir.first * dist, pdir.second * dist, view_field_def_width, view_field_def_heigth);
     }
 };

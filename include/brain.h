@@ -28,10 +28,10 @@ constexpr potential_t leak_alpha = 0.3;
 
 // Retina's neuron  params------------------------------------------------
 constexpr input_val_t delta_i_input_min = 1;
-constexpr clock_count_t reasonnable_t_acc_max = 1000; // ms
+constexpr clock_count_t reasonnable_t_acc_max = 10; // ms
 
 // Visual detector's  params------------------------------------------------
-constexpr input_val_t visual_detector_threshold = 2;
+constexpr input_val_t visual_detector_threshold = 1;
 constexpr potential_t detector_alpha = initial_neuron_threshold / reasonnable_t_acc_max / delta_i_input_min; // 1e-4
 
 // Weights update  params------------------------------------------------
@@ -119,19 +119,6 @@ struct neuron_t
 		synapses = other.synapses;
 	}
 };
-
-// Workers's types and params -----------------------------------------------
-
-constexpr uint32_t events_q_size = 1024;
-constexpr uint32_t weigths_q_size = 1024;
-
-using events_pack_t = std::vector<neuron_event_t>;
-using weights_pack_t = std::vector<weight_event_t>;
-
-// @brief arrays of output packs: one pack per each layer
-
-using events_output_buf_t = std::unordered_map<address_t, std::unique_ptr<events_pack_t>>;
-using weights_output_buf_t = std::unordered_map<address_t, std::unique_ptr<weights_pack_t>>;
 
 // Worker areas -----------------------------------------------
 
@@ -222,28 +209,29 @@ struct tworker_t
 	}
 
 	void put_event_to_output_buf(neuron_event_t &&ev);
+	void put_weight_to_output_buf(weight_event_t &&ev);
 
 	// template <typename OutputBufType>
 	// void move_output_packs_to_workers(OutputBufType &output_buf);
-	void move_output_packs_to_workers(events_output_buf_t &output_buf);
-	void move_output_packs_to_workers(weights_output_buf_t &output_buf);
+	void move_output_events_to_workers();
+	void move_output_weights_to_workers();
 
 	void move_signals_n_weights_packs_to_workers()
 	{
-		move_output_packs_to_workers(output_events_buf);
-		move_output_packs_to_workers(output_weights_buf);
+		move_output_events_to_workers();
+		move_output_weights_to_workers();
 	}
 
 	void cortex_proc([[maybe_unused]] layer_dim_t area_num);
 	void visual_scene_proc([[maybe_unused]] layer_dim_t area_num);
-	void mnist_couch_proc([[maybe_unused]] layer_dim_t area_num);
+	void prepare_mnist_couch_umems([[maybe_unused]] layer_dim_t area_num);
 
 	void pass_event_to_synapses(neuron_t &firing_neuron, neuron_address_t &&addr,
 								clock_count_t time_moment);
 
-	void pass_weight_event_to_output_buf(neuron_address_t &src_neuron,
-										 layer_dim_t synapse_num,
-										 clock_count_t spike_time);
+	// void put_weight_to_output_buf(neuron_address_t &src_neuron,
+	// 							   layer_dim_t synapse_num,
+	// 							   clock_count_t spike_time);
 
 	void execute()
 	{
@@ -297,7 +285,7 @@ struct retina_layer_t : public layer_t
 	std::shared_ptr<eyes_optics_t> p_eyes_optics;
 	scene_t scene_memories;
 
-	void set_eyes_optics(std::shared_ptr<eyes_optics_t> _p_eyes_optics) { p_eyes_optics = _p_eyes_optics; }
+	// void set_eyes_optics(std::shared_ptr<eyes_optics_t> _p_eyes_optics) { p_eyes_optics = _p_eyes_optics; }
 	retina_layer_t();
 	retina_layer_t(layer_dim_t rows, layer_dim_t cols);
 };
@@ -347,7 +335,7 @@ struct head_t
 		return workers.find(area_addr)->second;
 	}
 
-	void wake_up(scene_t *pscene, unsigned width, unsigned heigth);
+	void wake_up();
 	void go_to_sleep();
 	// void print_output(layer_dim_t layer_num);
 	head_t();
@@ -355,14 +343,19 @@ struct head_t
 
 inline std::shared_ptr<head_t> phead;
 
+
 // Global Tracer --------------------------------------------------
 inline std::shared_ptr<tracer_t> ptracer;
 
+inline std::shared_ptr<scene_t> get_locked_scene() { return phead->p_eyes_optics->get_locked_scene(); }
+inline void unlock_scene() { phead->p_eyes_optics->unlock_scene(); }
+inline scene_t &get_memories_scene() { return phead->pretina->scene_memories; }
+
 // Openers --------------------------------------------------
 
-void change_scene(scene_t *_pscene, layer_dim_t _left = 0, layer_dim_t _top = 0);
+// void change_scene(scene_t *_pscene, layer_dim_t _left = 0, layer_dim_t _top = 0);
 
-void print_image(scene_t *pscene);
+// void print_image(scene_t *pscene);
 
 // struct print_weights_t
 // {

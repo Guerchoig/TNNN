@@ -183,6 +183,17 @@ struct weight_event_t
                                                spike_time(spike_time) {}
 };
 
+// Workers's types and params -----------------------------------------------
+
+constexpr uint32_t events_q_size = 1024;
+constexpr uint32_t weigths_q_size = 1024;
+
+using events_pack_t = std::vector<neuron_event_t>;
+using weights_pack_t = std::vector<weight_event_t>;
+
+using events_output_buf_t = std::unordered_map<address_t, std::unique_ptr<events_pack_t>>;
+using weights_output_buf_t = std::unordered_map<address_t, std::unique_ptr<weights_pack_t>>;
+
 constexpr size_t events_cirular_buffer_size = 50;
 
 std::ostream &operator<<(std::ostream &os, TNN::layer_type t);

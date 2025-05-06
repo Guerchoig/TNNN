@@ -1,11 +1,15 @@
 #pragma once
 #include "common.h"
-#include <atomic_queue.h>
+// #include <atomic_queue.h>
+#include <queue>
 #include <SFML/Graphics.hpp>
 #include <SFML/Window.hpp>
 #include <array>
 #include <sstream>
 #include <memory>
+
+constexpr size_t queue_size = 60000;
+constexpr uint8_t DARK = 0;
 
 namespace tr
 {
@@ -23,9 +27,11 @@ namespace tr
     constexpr unsigned magnification = 9;
     constexpr std::uint8_t no_attenuation = 0xFF;
 
-    inline sf::RenderWindow window;
 }
 
+std::shared_ptr<scene_t> get_locked_scene();
+scene_t &get_memories_scene();
+void unlock_scene();
 
 struct tracer_t
 {
@@ -34,8 +40,7 @@ struct tracer_t
     unsigned v_resolution;
     unsigned vidgets_in_row;
     std::atomic<unsigned long long int> nof_events = 0;
-    std::array<const scene_t *, 2> scenes; // scene, prev_scene
-
+    
     // layer's activity representation
     std::array<sf::Sprite, tr::nof_layers> sprites;
     sf::Texture sprites_texture;
@@ -48,14 +53,15 @@ struct tracer_t
     sf::Font font;
     std::array<std::string, 1> labels = {{"Events: "}};
     std::array<std::string, 1> strings = {{""}};
+    sf::RenderWindow window;
 
     // drawing queue
+    std::queue<std::pair<neuron_address_t, unsigned long long int>> queue;
+    // atomic_queue::AtomicQueue2<std::pair<neuron_address_t, unsigned long long int>, queue_size> queue;
 
-    atomic_queue::AtomicQueue2<std::pair<neuron_address_t, unsigned long long int>, 1000> queue;
+    std::mutex tracer_mutex;
 
-    // std::mutex m;
-
-    void mt(sf::Text &text, int len, std::string &str)
+    void make_text_box(sf::Text &text, int len, std::string &str)
     {
         text.setFont(font);
         text.setCharacterSize(tr::char_size);
@@ -66,11 +72,9 @@ struct tracer_t
     }
 
     tracer_t(uint32_t h_resolution,
-             uint32_t v_resolution,
-             const scene_t *scene,
-             const scene_t *prev_scene) : h_resolution(h_resolution),
-                                          v_resolution(v_resolution),
-                                          scenes{scene, prev_scene}
+             uint32_t v_resolution) : h_resolution(h_resolution),
+                                                    v_resolution(v_resolution)
+
     {
         for (unsigned i = 0; i < tr::nof_layers; ++i)
             for (unsigned j = 0; j < tr::scene_width; ++j)
@@ -78,7 +82,7 @@ struct tracer_t
                     colors.at(i).at(j).at(k).a = tr::no_attenuation;
 
         vidgets_in_row = (h_resolution - tr::left_margin) / (tr::inter_sells + tr::scene_width * tr::magnification);
-        tr::window.create(sf::VideoMode(h_resolution, v_resolution), "TNNN tracer");
+        window.create(sf::VideoMode(h_resolution, v_resolution), "TNNN tracer");
 
         sprites_texture.create(tr::scene_width, tr::scene_width * tr::nof_layers);
 
@@ -97,78 +101,136 @@ struct tracer_t
             squares.at(i).setFillColor(sf::Color::Transparent);
             squares.at(i).setOutlineColor(sf::Color::Green);
             squares.at(i).setOutlineThickness(1);
-
-            // tr::window.draw(sprites.at(i));
-            // tr::window.draw(squares.at(i));
         }
 
         font.loadFromFile("/usr/share/fonts/truetype/ubuntu/Ubuntu-R.ttf");
 
         for (unsigned i = 0; i < texts.size(); ++i)
         {
-            mt(ltexts.at(i), tr::left_margin + tr::dubb_len * i, labels.at(i));
+            make_text_box(ltexts.at(i), tr::left_margin + tr::dubb_len * i, labels.at(i));
             strings.at(i).resize(tr::dubb_len - tr::label_len, ' ');
-            mt(texts.at(i), tr::left_margin + tr::dubb_len * i + tr::label_len, strings.at(i));
-            // tr::window.draw(ltexts.at(i));
+            make_text_box(texts.at(i), tr::left_margin + tr::dubb_len * i + tr::label_len, strings.at(i));
         }
-
-        // tr::window.display();
-        // tr::window.setActive(false); // Required for multithread!!
     }
-
-    void update([[maybe_unused]] const neuron_address_t &addr)
+    bool poll_for_closed_event()
     {
-        if(!queue.try_push(std::pair<neuron_address_t, unsigned long long int>(addr, nof_events.fetch_add(1, std::memory_order_relaxed))))
-            throw std::runtime_error("Tracer: queue is full");
-    }
+        std::lock_guard<std::mutex> lock(tracer_mutex);
+        sf::Event event;
 
-    void show()
-    {
-        tr::window.setActive(true);
-        std::pair<neuron_address_t, unsigned long long int> item;
-        while (queue.try_pop(item))
+        window.setActive(true);
+        // check all the window's events that were triggered since the last iteration of the loop
+        while (window.pollEvent(event))
         {
-            tr::window.clear(sf::Color::Black);
-
-            // update scene & prev scene
-            for (unsigned j = 0; j < tr::scene_width; ++j)
-                for (unsigned k = 0; k < tr::scene_width; ++k)
-                {
-                    colors.at(0).at(j).at(k).g = scenes[0]->at(j).at(k);
-                    colors.at(1).at(j).at(k).g = scenes[1]->at(j).at(k);
-                }
-
-            // update brain
-            for (unsigned j = 0; j < tr::scene_width; ++j)
-                for (unsigned k = 0; k < tr::scene_width; ++k)
-                {
-                    auto layer = item.first.layer + 2;
-                    auto &val = colors.at(layer).at(j).at(k).b;
-                    val = val != 0 ? val * (1 - tr::decrease) : 0x00;
-                    colors.at(layer).at(j).at(k).a = tr::no_attenuation;
-                }
-
-            colors.at(item.first.layer + 2).at(item.first.row).at(item.first.col).b = 0xFF;
-            colors.at(item.first.layer + 2).at(item.first.row).at(item.first.col).a = tr::no_attenuation;
-
-            sprites_texture.update(reinterpret_cast<std::uint8_t *>(colors.data()));
-
-            for (unsigned i = 0; i < tr::nof_layers; ++i)
+            if (event.type == sf::Event::Closed)
             {
-                tr::window.draw(sprites.at(i));
-                tr::window.draw(squares.at(i));
-            }
-
-            strings.at(0) = std::to_string(item.second);
-            texts[0].setString(strings.at(0));
-            tr::window.draw(texts.at(0));
-            for (unsigned i = 0; i < texts.size(); ++i)
-            {
-                tr::window.draw(ltexts.at(i));
-                tr::window.draw(texts.at(i));
+                window.close();
             }
         }
-        tr::window.display();
-        tr::window.setActive(false);
+
+        auto res = window.isOpen();
+
+        window.setActive(false);
+        return res;
+    }
+
+    // void set_scene(std::shared_ptr<scene_t> _pscene)
+    // {
+    //     std::lock_guard<std::mutex> lock(tracer_mutex);
+    //     scenes[0] = _pscene;
+    // }
+
+    void fade_out_sprite(unsigned num)
+    {
+        for (unsigned j = 0; j < tr::scene_width; ++j)
+            for (unsigned k = 0; k < tr::scene_width; ++k)
+            {
+                // colors.at(num).at(j).at(k).a = tr::no_attenuation;
+                colors.at(num).at(j).at(k).g = DARK;
+            }
+    }
+
+    
+    void show_scene()
+    {
+        std::lock_guard<std::mutex> lock(tracer_mutex);
+
+        window.setActive(true);
+        
+        // Lock n process scenes
+        auto pscene = get_locked_scene();
+        auto &old_scene = get_memories_scene();
+
+        for (unsigned j = 0; j < tr::scene_width; ++j)
+            for (unsigned k = 0; k < tr::scene_width; ++k)
+            {
+                colors.at(0).at(j).at(k).g = pscene->at(j).at(k);
+                colors.at(1).at(j).at(k).g = old_scene.at(j).at(k);
+            }
+        unlock_scene();
+        
+        // Update screen
+        sprites_texture.update(reinterpret_cast<std::uint8_t *>(colors.data()));
+        for (unsigned i = 0; i < 2; ++i)
+        {
+            window.draw(sprites.at(i));
+            window.draw(squares.at(i));
+        }
+        window.display();
+        window.setActive(false);
+    }
+
+    void show_output_events_buffer(events_output_buf_t &buffer)
+    {
+        if (!buffer.size())
+            return;
+        std::lock_guard<std::mutex> lock(tracer_mutex);
+        window.setActive(true);
+        std::pair<neuron_address_t, unsigned long long int> item;
+        std::pair<address_t, std::unique_ptr<events_pack_t>> events_key_n_pack;
+
+        for (auto it = buffer.begin(); it != buffer.end(); ++it)
+        {
+            // draw brain
+            if (it->second.get() == nullptr)
+                continue;
+            for (auto it2 = it->second->begin(); it2 != it->second->end(); ++it2)
+            {
+                auto &item = *it2;
+
+                auto layer = item.target_addr.layer + 2;
+                // fade_out_sprite(layer);
+                // update brain
+                for (unsigned j = 0; j < tr::scene_width; ++j)
+                    for (unsigned k = 0; k < tr::scene_width; ++k)
+                    {
+
+                        auto &val = colors.at(layer).at(j).at(k).b;
+                        val = val != 0 ? val * (1 - tr::decrease) : 0x00;
+                        colors.at(layer).at(j).at(k).a = tr::no_attenuation;
+                    }
+
+                colors.at(layer).at(item.target_addr.row).at(item.target_addr.col).b = 0xFF;
+                colors.at(layer).at(item.target_addr.row).at(item.target_addr.col).a = tr::no_attenuation;
+
+                sprites_texture.update(reinterpret_cast<std::uint8_t *>(colors.data()));
+
+                for (unsigned i = 0; i < tr::nof_layers; ++i)
+                {
+                    window.draw(sprites.at(i));
+                    window.draw(squares.at(i));
+                }
+
+                // strings.at(0) = std::to_string(item.second);
+                // texts[0].setString(strings.at(0));
+                // window.draw(texts.at(0));
+                // for (unsigned i = 0; i < texts.size(); ++i)
+                // {
+                //     window.draw(ltexts.at(i));
+                //     window.draw(texts.at(i));
+                // }
+            }
+        }
+        window.display();
+        window.setActive(false);
     }
 };

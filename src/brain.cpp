@@ -86,7 +86,6 @@ void mnist_couch_layer_t::set_label(layer_dim_t i_label)
 // Head constructors ------------------------------------------------
 head_t::head_t()
 {
-  p_eyes_optics = std::make_shared<eyes_optics_t>();
 
   nof_event_threads = std::thread::hardware_concurrency() / 2 - 1;
   // nof_event_threads = 2;
@@ -112,9 +111,10 @@ void retina_worker_t::worker()
          static_cast<size_t>(area_num) < areas.size();
          area_num++)
     {
-      // clear_output_buffers();
       // Process cortex inputs
       visual_scene_proc(area_num);
+      ptracer->show_scene();
+
       cortex_proc(area_num);
       move_signals_n_weights_packs_to_workers();
     }
@@ -146,9 +146,11 @@ void mnist_couch_worker_t::worker()
          static_cast<size_t>(area_num) < areas.size();
          area_num++)
     {
-      // clear_output_buffers();
+      // Decay non-label couch u_mems; highlight label u_mem
+      prepare_mnist_couch_umems(area_num);
+
+      // Process as cortex, consuming prepared u_mems
       cortex_proc(area_num);
-      mnist_couch_proc(area_num);
       move_signals_n_weights_packs_to_workers();
     }
   }
@@ -200,7 +202,13 @@ void tworker_t<Derived>::cortex_proc([[maybe_unused]] layer_dim_t area_num)
         // distance_t cur_distance = 0;
         trg.last_fired = time_moment;
         pass_event_to_synapses(trg, std::move(e.target_addr), time_moment);
-        pass_weight_event_to_output_buf(e.source_addr, e.src_synapse, time_moment);
+
+        auto ew = weight_event_t{
+            e.source_addr,
+            e.src_synapse,
+            time_moment};
+        put_weight_to_output_buf(std::move(ew));
+
         u_res = u_rest;
       }
       trg.u_mem = u_res;
@@ -214,20 +222,26 @@ void tworker_t<Derived>::visual_scene_proc([[maybe_unused]] layer_dim_t area_num
   auto time_moment = phead->net_timer.time();
   // Set shortcuts
   retina_layer_t *p_retina = phead->pretina;
-  auto scene_memories = &(p_retina->scene_memories);
-  auto p_scene = p_retina->p_eyes_optics->pscene;
   auto neurons = p_retina->neurons;
   auto area = areas[area_num];
   auto layer_num = area.layer;
 
+  std::lock_guard<std::mutex> l(p_retina->p_eyes_optics->moving_gaze);
+
   // Process scene inputs
+  auto p_scene = p_retina->p_eyes_optics->get_locked_scene();
+  auto &scene_memories = p_retina->scene_memories;
+
   for (layer_dim_t i = area.top; i <= area.bottom; ++i)
   {
     for (layer_dim_t j = area.left; j <= area.right; ++j)
     {
       // Updating potential
       neuron_t &neuron = p_retina->neuron_ref(i, j);
-      auto u = predict_retina_neuron_potential(neuron, (*p_scene)[i][j], (*scene_memories)[i][j]);
+      auto scene_val = p_scene->at(i).at(j);
+      auto &mem_val = scene_memories.at(i).at(j);
+
+      auto u = predict_retina_neuron_potential(neuron, scene_val, mem_val);
 
       // Firing
       if (u >= neuron.threshold)
@@ -239,18 +253,24 @@ void tworker_t<Derived>::visual_scene_proc([[maybe_unused]] layer_dim_t area_num
       neuron.u_mem = u;
     }
   }
+  p_retina->p_eyes_optics->unlock_scene();
 }
 
+constexpr potential_t couch_leak_alpha = 0.5;
+constexpr potential_t couch_u_label = 5.0;
+
 template <typename Derived>
-void tworker_t<Derived>::mnist_couch_proc([[maybe_unused]] layer_dim_t area_num)
+void tworker_t<Derived>::prepare_mnist_couch_umems([[maybe_unused]] layer_dim_t area_num)
 {
   auto &neurons = phead->layers.back()->neurons;
   auto label = std::static_pointer_cast<mnist_couch_layer_t>(phead->layers.back())->label;
 
-  for (size_t i = 0; i < neurons.size(); ++i)
-    for (size_t j = 0; j < neurons[i].size(); ++j)
-      neurons[i][j].u_mem = 0.0;
-  neurons[0][label].u_mem = 1.0;
+  for (size_t j = 0; j < neurons[0].size(); ++j)
+  {
+    neurons[0][j].u_mem *= (1 - couch_leak_alpha);
+  }
+
+  neurons[0][label].u_mem = couch_u_label;
 }
 
 // tworker_t output methods ----------------------------------------------------
@@ -278,87 +298,47 @@ void tworker_t<Derived>::pass_event_to_synapses(neuron_t &firing_neuron, neuron_
   }
 }
 
+#define _put_to_output_buf(addr, buff, _type)                               \
+  auto area_address = phead->area_address(addr);                            \
+  if (!buff.contains(area_address))                                         \
+    buff[area_address] = std::move(std::make_unique<std::vector<_type>>()); \
+  else if (buff[area_address].get() == nullptr)                             \
+    buff[area_address] = std::move(std::make_unique<std::vector<_type>>()); \
+  buff[area_address]->push_back(std::move(ev));
+
 template <typename Derived>
 void tworker_t<Derived>::put_event_to_output_buf(neuron_event_t &&ev)
 {
-  auto area_address = phead->area_address(ev.target_addr);
-
-  if (!output_events_buf.contains(area_address))
-    output_events_buf[area_address] = std::move(std::make_unique<std::vector<neuron_event_t>>());
-
-  output_events_buf[area_address]->push_back(std::move(ev));
+  _put_to_output_buf(ev.target_addr, output_events_buf, neuron_event_t);
 }
 
 template <typename Derived>
-void tworker_t<Derived>::pass_weight_event_to_output_buf(neuron_address_t &src_neuron_addr,
-                                                         layer_dim_t synapse_num,
-                                                         clock_count_t spike_time)
+void tworker_t<Derived>::put_weight_to_output_buf(weight_event_t &&ev)
 {
-  auto area_address = phead->area_address(src_neuron_addr);
-  if (!output_weights_buf.contains(area_address))
-    output_weights_buf[area_address] = std::move(std::make_unique<std::vector<weight_event_t>>());
-  output_weights_buf[area_address]->push_back(std::move(weight_event_t(src_neuron_addr, synapse_num, spike_time)));
-  ptracer->update(src_neuron_addr);
+  _put_to_output_buf(ev.addr, output_weights_buf, weight_event_t);
 }
 
-// ----------------------------------------------------------------------------------------------------------------------------------
-// Define a traits structure to map output buffer types to the corresponding member
-// template <typename OutputBufType>
-// struct worker_input_member;
-
-// template <>
-// struct worker_input_member<events_output_buf_t>
-// {
-//   static constexpr auto value = &retina_worker_t::input_events;
-// };
-
-// template <>
-// struct worker_input_member<weights_output_buf_t>
-// {
-//   static constexpr auto value = &retina_worker_t::input_weights;
-// };
-
-// template <typename Derived>
-// template <typename OutputBufType>
-// void tworker_t<Derived>::move_output_packs_to_workers(OutputBufType &output_buf)
-// {
-//   constexpr auto member_ptr = worker_input_member<OutputBufType>::value;
-
-//   for (auto it = output_buf.begin(); it != output_buf.end(); ++it)
-//   {
-//     // The comment mentions retina_worker_t is used, so retain the reinterpret_pointer_cast
-//     auto p = std::reinterpret_pointer_cast<retina_worker_t>(phead->workers[it->first]);
-//     if (!(p->(*member_ptr)).try_push(std::move(it->second)))
-//       throw std::runtime_error("Worker is full");
-//   }
-// }
-// ----------------------------------------------------------------------------------------------------------------------------------
-
-
-
-template <typename Derived>
-void tworker_t<Derived>::move_output_packs_to_workers(events_output_buf_t &output_buf)
-{
-  for (auto it = output_buf.begin(); it != output_buf.end(); ++it)
-  {
-    // could use any worker type instead of retina_worker_t
-    // because of using common tworker_t::try_push_e function
-    auto p = cast_to_pretina_worker(phead->workers[it->first]);
-    if (!p->input_events.try_push(std::move(it->second)))
-      throw std::runtime_error("Worker is full");
+#define _move_to_workers(output_buf, input_buf)                    \
+  for (auto it = output_buf.begin(); it != output_buf.end(); ++it) \
+  {                                                                \
+    auto p = cast_to_pretina_worker(phead->workers[it->first]);    \
+    if (it->second.get() != nullptr)                               \
+    {                                                              \
+      if (!p->input_buf.try_push(std::move(it->second)))           \
+        throw std::runtime_error("Worker is full");                \
+    }                                                              \
   }
+
+template <typename Derived>
+void tworker_t<Derived>::move_output_events_to_workers()
+{
+  // ptracer->show_output_events_buffer(output_events_buf);
+  _move_to_workers(output_events_buf, input_events);
 }
 template <typename Derived>
-void tworker_t<Derived>::move_output_packs_to_workers(weights_output_buf_t &output_buf)
+void tworker_t<Derived>::move_output_weights_to_workers()
 {
-  for (auto it = output_buf.begin(); it != output_buf.end(); ++it)
-  {
-    // could use any worker type instead of retina_worker_t
-    // because of using common tworker_t::try_push_e function
-    auto p = std::reinterpret_pointer_cast<retina_worker_t>(phead->workers[it->first]);
-    if (!p->input_weights.try_push(std::move(it->second)))
-      throw std::runtime_error("Worker is full");
-  }
+  _move_to_workers(output_weights_buf, input_weights);
 }
 
 // Potentials & Weights updater functions------------------------------------------
@@ -372,6 +352,7 @@ potential_t predict_cortex_neuron_potential(neuron_t &neuron, synapse_t &synapse
 potential_t predict_retina_neuron_potential(const neuron_t &neuron, scene_signal_t signal, scene_signal_t &memory_signal)
 {
   auto u = neuron.u_mem * (1 - leak_alpha);
+
   auto delta_curr = abs(signal - memory_signal);
   if (delta_curr > visual_detector_threshold)
   {
@@ -418,11 +399,11 @@ void head_t::make_worker_areas(worker_areas_coll_t &areas_coll, const areas_desc
   }
 }
 
-void head_t::wake_up(scene_t *pscene, unsigned width, unsigned heigth)
+void head_t::wake_up()
 {
   // Init eyes
-  change_scene(pscene);
-  p_eyes_optics->zoom(0, 0, width, heigth);
+  // change_scene(pscene);
+  // p_eyes_optics->zoom(0, 0, width, heigth);
 
   // Init threads
   finish.store(false);
@@ -432,9 +413,9 @@ void head_t::wake_up(scene_t *pscene, unsigned width, unsigned heigth)
   areas_descr_coll_t areas_descr{
       {{0, 0, 0, 1, 1}}, // retina
       {{1, 0, 0, 1, 1}}, // cortex 1
-      {{2, 0, 0, 1, 1}}, // cortex 2
-      {{3, 0, 0, 1, 1}}, // cortex 3
-      {{4, 0, 0, 1, 1}}  // couching
+      {{2, 0, 0, 1, 1}}  //, // cortex 2
+                         // {{3, 0, 0, 1, 1}}, // cortex 3
+                         // {{4, 0, 0, 1, 1}}  // couching
 
   };
 
@@ -513,13 +494,13 @@ neuron_t &neuron_address_t::ref()
 //   }
 // }
 
-void change_scene(scene_t *_pscene, layer_dim_t _left, layer_dim_t _top)
-{
-  phead->p_eyes_optics->moving_gaze = true;
-  phead->p_eyes_optics->pscene = _pscene;
-  phead->p_eyes_optics->zoom(_left, _top, mnist_size, mnist_size);
-  phead->p_eyes_optics->moving_gaze = false;
-}
+// void change_scene(scene_t *_pscene, layer_dim_t _left, layer_dim_t _top)
+// {
+//   phead->p_eyes_optics->moving_gaze = true;
+//   phead->p_eyes_optics->pscene = std::shared_ptr<scene_t>(_pscene);
+//   phead->p_eyes_optics->zoom(_left, _top, mnist_size, mnist_size);
+//   phead->p_eyes_optics->moving_gaze = false;
+// }
 
 // Actuator constructors ------------------------------------------------
 // actuator_layer_t::actuator_layer_t()

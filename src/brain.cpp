@@ -86,7 +86,7 @@ void mnist_couch_layer_t::set_label(layer_dim_t i_label)
 // Head constructors ------------------------------------------------
 head_t::head_t()
 {
-
+  p_eyes_optics = std::make_shared<eyes_optics_t>(); // p_eyes_optics;
   nof_event_threads = std::thread::hardware_concurrency() / 2 - 1;
   // nof_event_threads = 2;
 }
@@ -332,7 +332,7 @@ void tworker_t<Derived>::put_weight_to_output_buf(weight_event_t &&ev)
 template <typename Derived>
 void tworker_t<Derived>::move_output_events_to_workers()
 {
-  // ptracer->show_output_events_buffer(output_events_buf);
+  ptracer->show_output_events_buffer(output_events_buf);
   _move_to_workers(output_events_buf, input_events);
 }
 template <typename Derived>
@@ -401,10 +401,6 @@ void head_t::make_worker_areas(worker_areas_coll_t &areas_coll, const areas_desc
 
 void head_t::wake_up()
 {
-  // Init eyes
-  // change_scene(pscene);
-  // p_eyes_optics->zoom(0, 0, width, heigth);
-
   // Init threads
   finish.store(false);
 

@@ -2,6 +2,7 @@
 #include "common.h"
 #include "tracer.h"
 #include <atomic>
+#include <mutex>
 
 // View field
 constexpr unsigned view_field_def_width = mnist_size;

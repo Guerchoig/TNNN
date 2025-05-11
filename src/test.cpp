@@ -71,6 +71,7 @@ int main()
     ptracer = std::make_shared<tracer_t>(1720, 1050);
 
     phead = std::move(std::make_shared<head_t>());
+    
     pmnist = std::make_shared<mnist_set>();
     pmnist->init_set("../MNIST/train-images-idx3-ubyte",
                      "../MNIST/train-labels-idx1-ubyte", true);

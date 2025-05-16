@@ -21,18 +21,18 @@ using input_val_t = int;
 constexpr double spike_velocity = 1.0;
 
 // Neuron's params-----------------------------------------------
-constexpr potential_t delta_u_mem = 0.05;
+constexpr potential_t delta_u_mem = 0.015;
 constexpr potential_t initial_neuron_threshold = 0.7;
-constexpr potential_t u_rest = 0.00;
-constexpr potential_t leak_alpha = 0.3;
+constexpr potential_t u_rest = -0.2;
+constexpr potential_t cortex_leak_alpha = 0.01;
 
 // Retina's neuron  params------------------------------------------------
-constexpr input_val_t delta_i_input_min = 1;
+constexpr input_val_t delta_signal_min = 1;
 constexpr clock_count_t reasonnable_t_acc_max = 10; // ms
 
 // Visual detector's  params------------------------------------------------
 constexpr input_val_t visual_detector_threshold = 1;
-constexpr potential_t detector_alpha = initial_neuron_threshold / reasonnable_t_acc_max / delta_i_input_min; // 1e-4
+constexpr potential_t detector_alpha = initial_neuron_threshold / reasonnable_t_acc_max / delta_signal_min; // 1e-4
 
 // Weights update  params------------------------------------------------
 constexpr potential_t weigth_alpha = 0.1;			  // synapse.weight *= (weigth_alpha + 1)
@@ -185,7 +185,102 @@ struct input_worker_queue_t
 	}
 };
 
-// Workers -----------------------------------------------
+potential_t predict_retina_neuron_potential(const neuron_t &neuron, scene_signal_t signal, scene_signal_t &memory_signal);
+potential_t predict_cortex_neuron_potential(neuron_t &neuron, synapse_t &synapse);
+void hebb_update_weight(neuron_t &neuron, synapse_t &synapse, clock_count_t afferent_spike_time);
+
+using layers_t = std::vector<std::shared_ptr<layer_t>>;
+
+template <typename T>
+concept Is_layer = std::is_base_of_v<layer_t, T>;
+
+template <Is_layer T>
+void create_neurons(T *layer, layer_dim_t rows, layer_dim_t cols);
+
+// Derived layers------------------------------------------------
+
+struct retina_layer_t : public layer_t
+{
+	std::shared_ptr<eyes_optics_t> p_eyes_optics;
+	scene_t scene_memories{};
+
+	// void set_eyes_optics(std::shared_ptr<eyes_optics_t> _p_eyes_optics) { p_eyes_optics = _p_eyes_optics; }
+	retina_layer_t();
+	retina_layer_t(layer_dim_t rows, layer_dim_t cols);
+	void clear_scene_memories()
+	{
+		for (auto &scene_memory : scene_memories)
+			scene_memory.fill(0);
+	}
+};
+
+struct cortex_layer_t : layer_t
+{
+	cortex_layer_t();
+	cortex_layer_t(layer_dim_t rows, layer_dim_t cols);
+};
+
+struct mnist_couch_layer_t : layer_t
+{
+	unsigned char label;
+
+	void set_label(layer_dim_t i_label = 0);
+	mnist_couch_layer_t();
+	mnist_couch_layer_t(layer_dim_t rows, layer_dim_t cols);
+};
+
+// head_t ------------------------------------------------
+#define _cast_to_pretina_worker(p) (std::reinterpret_pointer_cast<retina_worker_t>(p))
+struct head_t : head_interface_t
+{
+	layers_t layers;
+	std::vector<area_bounds_t> area_bounds_of_layers;
+
+	retina_layer_t *pretina;
+	std::shared_ptr<eyes_optics_t> p_eyes_optics;
+	net_timer_t net_timer;
+	const clock_count_t stdp_delay = 5L;
+
+	std::unordered_map<address_t, std::shared_ptr<void>> workers;
+	std::atomic<uint> active_workers;
+
+	std::atomic<bool> finish;
+	conn_descr_coll_t connections;
+	std::shared_ptr<tracer_t> ptracer; // tracer must NOT be deleted before head
+
+	void make_worker_areas(worker_areas_coll_t &areas_coll, const areas_descr_coll_t &descr_areas_coll);
+
+	address_t area_address(neuron_address_t &neuron_addr)
+	{
+		return address_t(neuron_addr.layer, neuron_addr.row / area_bounds_of_layers[neuron_addr.layer].row_side,
+						 neuron_addr.col / area_bounds_of_layers[neuron_addr.layer].col_side);
+	}
+
+	std::shared_ptr<void> worker_by_addr(address_t area_addr)
+	{
+		return workers.find(area_addr)->second;
+	}
+
+	void wake_up();
+	void go_to_sleep();
+	void clear_scene_memory() override final
+	{
+		pretina->clear_scene_memories();
+	}
+
+	neuron_t &neuron_ref(address_t &addr)
+	{
+		auto &_layer = *(layers.at(addr.layer));
+		return _layer.neuron_ref(addr.row, addr.col);
+	}
+
+	head_t();
+};
+
+using phead_t = std::shared_ptr<head_t>;
+using ptracer_t = std::shared_ptr<tracer_t>;
+
+// workers types ------------------------------------------------
 template <typename Derived> // Curiously Recurring Template Pattern
 struct tworker_t
 {
@@ -199,6 +294,9 @@ struct tworker_t
 
 	events_output_buf_t output_events_buf;
 	weights_output_buf_t output_weights_buf;
+
+	phead_t phead;
+	ptracer_t ptracer;
 
 	void clear_output_buffers()
 	{
@@ -238,12 +336,14 @@ struct tworker_t
 		static_cast<Derived *>(this)->worker();
 	}
 
-	tworker_t(const one_worker_areas_t &areas);
-
-	~tworker_t()
+	void join()
 	{
-		worker_thread.join();
+		static_cast<Derived *>(this)->worker_thread.join();
 	}
+
+	tworker_t(phead_t phead, const one_worker_areas_t &areas,
+			  ptracer_t ptracer = nullptr);
+	~tworker_t();
 };
 
 struct retina_worker_t : public tworker_t<retina_worker_t> // Curiously Recurring Template Pattern
@@ -260,129 +360,3 @@ struct mnist_couch_worker_t : public tworker_t<mnist_couch_worker_t> // Curiousl
 {
 	void worker();
 };
-
-// struct actuator_worker_t : public tworker_t<actuator_worker_t> // Curiously Recurring Template Pattern
-// {
-// 	void worker(layer_dim_t area_num);
-// };
-
-potential_t predict_retina_neuron_potential(const neuron_t &neuron, scene_signal_t signal, scene_signal_t &memory_signal);
-potential_t predict_cortex_neuron_potential(neuron_t &neuron, synapse_t &synapse);
-void hebb_update_weight(neuron_t &neuron, synapse_t &synapse, clock_count_t afferent_spike_time);
-
-using layers_t = std::vector<std::shared_ptr<layer_t>>;
-
-template <typename T>
-concept Is_layer = std::is_base_of_v<layer_t, T>;
-
-template <Is_layer T>
-void create_neurons(T *layer, layer_dim_t rows, layer_dim_t cols);
-
-// Derived layers------------------------------------------------
-
-struct retina_layer_t : public layer_t
-{
-	std::shared_ptr<eyes_optics_t> p_eyes_optics;
-	scene_t scene_memories;
-
-	// void set_eyes_optics(std::shared_ptr<eyes_optics_t> _p_eyes_optics) { p_eyes_optics = _p_eyes_optics; }
-	retina_layer_t();
-	retina_layer_t(layer_dim_t rows, layer_dim_t cols);
-};
-
-struct cortex_layer_t : layer_t
-{
-	cortex_layer_t();
-	cortex_layer_t(layer_dim_t rows, layer_dim_t cols);
-};
-
-struct mnist_couch_layer_t : layer_t
-{
-	unsigned char label;
-
-	void set_label(layer_dim_t i_label = 0);
-	mnist_couch_layer_t();
-	mnist_couch_layer_t(layer_dim_t rows, layer_dim_t cols);
-};
-
-// head_t ------------------------------------------------
-#define cast_to_pretina_worker(p) (std::reinterpret_pointer_cast<retina_worker_t>(p))
-struct head_t
-{
-	layers_t layers;
-	std::vector<area_bounds_t> area_bounds_of_layers;
-
-	retina_layer_t *pretina;
-	std::shared_ptr<eyes_optics_t> p_eyes_optics;
-	net_timer_t net_timer;
-	const clock_count_t stdp_delay = 5L;
-
-	std::unordered_map<address_t, std::shared_ptr<void>> workers;
-
-	std::atomic<bool> finish;
-	conn_descr_coll_t connections;
-
-	void make_worker_areas(worker_areas_coll_t &areas_coll, const areas_descr_coll_t &descr_areas_coll);
-
-	address_t area_address(neuron_address_t &neuron_addr)
-	{
-		return address_t(neuron_addr.layer, neuron_addr.row / area_bounds_of_layers[neuron_addr.layer].row_side,
-						 neuron_addr.col / area_bounds_of_layers[neuron_addr.layer].col_side);
-	}
-
-	std::shared_ptr<void> worker_by_addr(address_t area_addr)
-	{
-		return workers.find(area_addr)->second;
-	}
-
-	void wake_up();
-	void go_to_sleep();
-	// void print_output(layer_dim_t layer_num);
-	head_t();
-};
-
-inline std::shared_ptr<head_t> phead;
-
-
-// Global Tracer --------------------------------------------------
-inline std::shared_ptr<tracer_t> ptracer;
-
-inline std::shared_ptr<scene_t> get_locked_scene() { return phead->p_eyes_optics->get_locked_scene(); }
-inline void unlock_scene() { phead->p_eyes_optics->unlock_scene(); }
-inline scene_t &get_memories_scene() { return phead->pretina->scene_memories; }
-
-// Openers --------------------------------------------------
-
-// void change_scene(scene_t *_pscene, layer_dim_t _left = 0, layer_dim_t _top = 0);
-
-// void print_image(scene_t *pscene);
-
-// struct print_weights_t
-// {
-
-// 	std::fstream weights_file;
-// 	// ("../networks/weigths.out", std::ios::out | std::ios::trunc);
-// 	void operator()(layer_dim_t layer_num, layer_dim_t row_num);
-// 	print_weights_t() : wmutex()
-// 	{
-// 		weights_file.open("../networks/weigths.out", std::ios::out | std::ios::trunc);
-// 		weights_file.precision(2);
-// 	}
-// 	~print_weights_t()
-// 	{
-// 		weights_file.close();
-// 	}
-// };
-// inline print_weights_t print_weights;
-
-// struct actuator_layer_t : layer_t
-// {
-// 	vector_2D_t<clock_circular_buffer> clocks;
-// 	clock_count_t value(address_t &&addr)
-// 	{
-// 		return clocks.at(addr.row).at(addr.col).size();
-// 	}
-
-// 	actuator_layer_t();
-// 	actuator_layer_t(layer_dim_t rows, layer_dim_t cols);
-// };

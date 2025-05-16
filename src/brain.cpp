@@ -9,11 +9,11 @@
 #include <random>
 #include <atomic>
 #include <type_traits>
+#include <limits>
 
 using namespace TNN;
 
 // Layer constructor's common ------------------------------------------
-
 template <Is_layer T>
 void create_neurons(T *layer, layer_dim_t rows,
                     layer_dim_t cols)
@@ -86,18 +86,30 @@ void mnist_couch_layer_t::set_label(layer_dim_t i_label)
 // Head constructors ------------------------------------------------
 head_t::head_t()
 {
-  p_eyes_optics = std::make_shared<eyes_optics_t>(); // p_eyes_optics;
+  p_eyes_optics = std::make_shared<eyes_optics_t>();
   nof_event_threads = std::thread::hardware_concurrency() / 2 - 1;
-  // nof_event_threads = 2;
 }
 
-// tworker_t constructor ----------------------------------------------------
+// tworker_t constructor & destructor ----------------------------------------------------
 template <typename Derived>
-tworker_t<Derived>::tworker_t(const one_worker_areas_t &_areas)
+tworker_t<Derived>::tworker_t(const phead_t phead, const one_worker_areas_t &_areas,
+                              const ptracer_t ptracer) : phead(phead), ptracer(ptracer)
 {
   for (size_t i = 0; i < _areas.size(); ++i)
     areas.push_back(_areas[i]);
   worker_thread = std::thread(&tworker_t::execute, this);
+  phead->active_workers++;
+}
+
+template <typename Derived>
+tworker_t<Derived>::~tworker_t()
+{
+  phead->active_workers--;
+
+  std::chrono::milliseconds timespan(10);
+  while (phead->active_workers.load())
+    std::this_thread::sleep_for(timespan);
+  worker_thread.join();
 }
 
 // Layers's workers -------------------------------------------------------------
@@ -113,7 +125,6 @@ void retina_worker_t::worker()
     {
       // Process cortex inputs
       visual_scene_proc(area_num);
-      ptracer->show_scene();
 
       cortex_proc(area_num);
       move_signals_n_weights_packs_to_workers();
@@ -123,9 +134,9 @@ void retina_worker_t::worker()
 
 void cortex_worker_t::worker()
 {
-
   while (!phead->finish.load())
   {
+
     for (layer_dim_t area_num = 0;
          static_cast<size_t>(area_num) < areas.size();
          area_num++)
@@ -133,6 +144,7 @@ void cortex_worker_t::worker()
       // clear_output_buffers();
       // Process cortex inputs
       cortex_proc(area_num);
+
       move_signals_n_weights_packs_to_workers();
     }
   }
@@ -142,6 +154,7 @@ void mnist_couch_worker_t::worker()
 {
   while (!phead->finish.load())
   {
+
     for (layer_dim_t area_num = 0;
          static_cast<size_t>(area_num) < areas.size();
          area_num++)
@@ -151,6 +164,7 @@ void mnist_couch_worker_t::worker()
 
       // Process as cortex, consuming prepared u_mems
       cortex_proc(area_num);
+
       move_signals_n_weights_packs_to_workers();
     }
   }
@@ -163,7 +177,7 @@ void tworker_t<Derived>::cortex_proc([[maybe_unused]] layer_dim_t area_num)
 {
   auto time_moment = phead->net_timer.time();
   std::unique_ptr<weights_pack_t> p_wpack;
-  // DN("Cortex proc");
+
   // Process weights
   while (input_weights.try_pop(p_wpack))
   {
@@ -172,7 +186,7 @@ void tworker_t<Derived>::cortex_proc([[maybe_unused]] layer_dim_t area_num)
     // Proccess input weights pack
     for (auto &we : *p_wpack)
     {
-      auto &neuron = we.addr.ref();
+      auto &neuron = phead->neuron_ref(we.addr);
       auto &synapse = neuron.synapses.at(we.synapse_num);
       hebb_update_weight(neuron, synapse, we.spike_time);
     }
@@ -180,6 +194,8 @@ void tworker_t<Derived>::cortex_proc([[maybe_unused]] layer_dim_t area_num)
 
   // Process events
   std::unique_ptr<events_pack_t> p_epack;
+  auto tracer_buf = std::make_shared<tracer_buf_t>();
+
   while (input_events.try_pop(p_epack))
   {
     if (p_epack.get() == nullptr)
@@ -187,8 +203,8 @@ void tworker_t<Derived>::cortex_proc([[maybe_unused]] layer_dim_t area_num)
     // Process input events pack
     for (auto &e : *p_epack)
     {
-      auto &trg = e.target_addr.ref();
-      auto &src = e.source_addr.ref();
+      auto &trg = phead->neuron_ref(e.target_addr);
+      auto &src = phead->neuron_ref(e.source_addr);
       auto &synapse = src.synapses[e.src_synapse];
       auto u = predict_cortex_neuron_potential(trg, synapse);
       // Fire if needed
@@ -203,6 +219,11 @@ void tworker_t<Derived>::cortex_proc([[maybe_unused]] layer_dim_t area_num)
         trg.last_fired = time_moment;
         pass_event_to_synapses(trg, std::move(e.target_addr), time_moment);
 
+        // Add to tracer buffer
+        tracer_buf->push_back(std::make_pair<neuron_address_t, layer_dim_t>({static_cast<layer_dim_t>(e.target_addr.layer + 2), e.target_addr.row, e.target_addr.col},
+                                                                            std::numeric_limits<std::uint8_t>::max()));
+
+        // Put weight to output buffer
         auto ew = weight_event_t{
             e.source_addr,
             e.src_synapse,
@@ -214,6 +235,8 @@ void tworker_t<Derived>::cortex_proc([[maybe_unused]] layer_dim_t area_num)
       trg.u_mem = u_res;
     }
   }
+  // Trace show layers
+  ptracer->display_tracer_buf(tracer_buf);
 }
 
 template <typename Derived>
@@ -226,11 +249,11 @@ void tworker_t<Derived>::visual_scene_proc([[maybe_unused]] layer_dim_t area_num
   auto area = areas[area_num];
   auto layer_num = area.layer;
 
-  std::lock_guard<std::mutex> l(p_retina->p_eyes_optics->moving_gaze);
-
   // Process scene inputs
   auto p_scene = p_retina->p_eyes_optics->get_locked_scene();
   auto &scene_memories = p_retina->scene_memories;
+
+  auto tracer_buf = std::make_shared<tracer_buf_t>();
 
   for (layer_dim_t i = area.top; i <= area.bottom; ++i)
   {
@@ -238,22 +261,38 @@ void tworker_t<Derived>::visual_scene_proc([[maybe_unused]] layer_dim_t area_num
     {
       // Updating potential
       neuron_t &neuron = p_retina->neuron_ref(i, j);
-      auto scene_val = p_scene->at(i).at(j);
-      auto &mem_val = scene_memories.at(i).at(j);
+      std::uint8_t scene_val;
 
+      scene_val = p_scene->at(i).at(j);
+
+      auto &mem_val = scene_memories.at(i).at(j);
       auto u = predict_retina_neuron_potential(neuron, scene_val, mem_val);
+
+      // Trace scenes
+      tracer_buf->push_back(std::make_pair<neuron_address_t, layer_dim_t>({static_cast<layer_dim_t>(layer_num), i, j},
+                                                                          scene_val));
+
+      tracer_buf->push_back(std::make_pair<neuron_address_t, layer_dim_t>({static_cast<layer_dim_t>(layer_num + 1), i, j},
+                                                                          mem_val));
 
       // Firing
       if (u >= neuron.threshold)
       {
         neuron.last_fired = time_moment;
-        pass_event_to_synapses(neuron, {static_cast<layer_dim_t>(layer_num), i, j}, time_moment);
+        pass_event_to_synapses(neuron,
+                               {static_cast<layer_dim_t>(layer_num), i, j},
+                               time_moment);
         u = u_rest;
+        tracer_buf->push_back(std::make_pair<neuron_address_t, layer_dim_t>({static_cast<layer_dim_t>(layer_num + 2), i, j},
+                                                                            std::numeric_limits<std::uint8_t>::max()));
       }
       neuron.u_mem = u;
     }
   }
   p_retina->p_eyes_optics->unlock_scene();
+
+  // Trace show scene
+  ptracer->display_tracer_buf(tracer_buf);
 }
 
 constexpr potential_t couch_leak_alpha = 0.5;
@@ -321,7 +360,7 @@ void tworker_t<Derived>::put_weight_to_output_buf(weight_event_t &&ev)
 #define _move_to_workers(output_buf, input_buf)                    \
   for (auto it = output_buf.begin(); it != output_buf.end(); ++it) \
   {                                                                \
-    auto p = cast_to_pretina_worker(phead->workers[it->first]);    \
+    auto p = _cast_to_pretina_worker(phead->workers[it->first]);   \
     if (it->second.get() != nullptr)                               \
     {                                                              \
       if (!p->input_buf.try_push(std::move(it->second)))           \
@@ -332,7 +371,6 @@ void tworker_t<Derived>::put_weight_to_output_buf(weight_event_t &&ev)
 template <typename Derived>
 void tworker_t<Derived>::move_output_events_to_workers()
 {
-  ptracer->show_output_events_buffer(output_events_buf);
   _move_to_workers(output_events_buf, input_events);
 }
 template <typename Derived>
@@ -345,19 +383,19 @@ void tworker_t<Derived>::move_output_weights_to_workers()
 
 potential_t predict_cortex_neuron_potential(neuron_t &neuron, synapse_t &synapse)
 {
-  auto u = neuron.u_mem * (1 - leak_alpha) + synapse.weight * delta_u_mem;
+  auto u = neuron.u_mem * (1 - cortex_leak_alpha) + synapse.weight * delta_u_mem;
   return u;
 }
 
 potential_t predict_retina_neuron_potential(const neuron_t &neuron, scene_signal_t signal, scene_signal_t &memory_signal)
 {
-  auto u = neuron.u_mem * (1 - leak_alpha);
+  auto u = neuron.u_mem * (1 - cortex_leak_alpha);
 
-  auto delta_curr = abs(signal - memory_signal);
-  if (delta_curr > visual_detector_threshold)
+  auto delta_curr = signal - memory_signal;
+  if (abs(delta_curr > visual_detector_threshold))
   {
     u += delta_curr * detector_alpha;
-    memory_signal = signal * detector_alpha + memory_signal;
+    memory_signal += signal * detector_alpha;
   }
   return u;
 }
@@ -365,7 +403,9 @@ potential_t predict_retina_neuron_potential(const neuron_t &neuron, scene_signal
 void hebb_update_weight(neuron_t &neuron, synapse_t &synapse, clock_count_t afferent_spike_time)
 {
   if (afferent_spike_time - neuron.last_fired > weigth_correlation_time)
-    synapse.weight *= (weigth_alpha + 1);
+    synapse.weight *= (1 + weigth_alpha);
+  else
+    synapse.weight *= (1 - weigth_alpha / 5);
 }
 
 // ------------------------------------------------------------------------------
@@ -379,8 +419,8 @@ void head_t::make_worker_areas(worker_areas_coll_t &areas_coll, const areas_desc
     for (auto desrcr_area = descr_areas->begin(); desrcr_area != descr_areas->end(); ++desrcr_area)
     {
       auto layer_num = desrcr_area->layer_num;
-      uint32_t rows = phead->layers[layer_num]->neurons.size();
-      uint32_t cols = phead->layers[layer_num]->neurons[0].size();
+      uint32_t rows = layers[layer_num]->neurons.size();
+      uint32_t cols = layers[layer_num]->neurons[0].size();
       uint32_t row_side = rows / desrcr_area->n_by_rows;
       uint32_t col_side = cols / desrcr_area->n_by_cols;
 
@@ -409,10 +449,9 @@ void head_t::wake_up()
   areas_descr_coll_t areas_descr{
       {{0, 0, 0, 1, 1}}, // retina
       {{1, 0, 0, 1, 1}}, // cortex 1
-      {{2, 0, 0, 1, 1}}  //, // cortex 2
+      {{2, 0, 0, 1, 1}}, // cortex 2
                          // {{3, 0, 0, 1, 1}}, // cortex 3
-                         // {{4, 0, 0, 1, 1}}  // couching
-
+      {{3, 0, 0, 1, 1}}  // couching
   };
 
   make_worker_areas(areas_coll, areas_descr);
@@ -425,14 +464,18 @@ void head_t::wake_up()
   };
 
   // Add workers
-  add_worker(areas_descr[0], std::make_shared<retina_worker_t>(areas_coll[0]));
+  auto shared_this = std::make_shared<head_t>(this);
+
+  add_worker(areas_descr[0], std::make_shared<retina_worker_t>(shared_this, areas_coll[0], ptracer));
 
   for (unsigned i = 1; i < areas_descr.size() - 1; ++i)
   {
-    add_worker(areas_descr[i], std::make_shared<cortex_worker_t>(areas_coll[i]));
+    add_worker(areas_descr[i], std::make_shared<cortex_worker_t>(shared_this, areas_coll[i], ptracer));
   }
 
-  add_worker(areas_descr[areas_descr.size() - 1], std::make_shared<mnist_couch_worker_t>(areas_coll[areas_coll.size() - 1]));
+  add_worker(areas_descr[areas_descr.size() - 1],
+             std::make_shared<mnist_couch_worker_t>(shared_this,
+                                                    areas_coll[areas_coll.size() - 1], ptracer));
 }
 
 void head_t::go_to_sleep()
@@ -453,12 +496,6 @@ void print_image(scene_t *pscene)
 }
 
 // Openers----------------------------------------------------------------
-
-neuron_t &neuron_address_t::ref()
-{
-  auto &_layer = *(phead->layers.at(layer));
-  return _layer.neuron_ref(row, col);
-}
 
 // void print_weights_t::operator()(layer_dim_t layer_num, layer_dim_t row_num)
 // {

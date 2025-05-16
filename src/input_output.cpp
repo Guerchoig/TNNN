@@ -22,13 +22,14 @@ double calc_delay(neuron_address_t src,
     return res;
 }
 
-void create_synapses_between_2_layers(neuron_address_t src,
+void create_synapses_between_2_layers(phead_t phead,
+                                      neuron_address_t src,
                                       neuron_address_t trg,
                                       TNN::ferment_t ferment,
                                       layer_dim_t radius,
                                       [[maybe_unused]] clock_count_t delay)
 {
-    auto &synapses = src.ref().synapses;
+    auto &synapses = phead->neuron_ref(src).synapses;
 
     std::random_device rd;
     std::mt19937 gen(rd());
@@ -57,7 +58,7 @@ void create_synapses_between_2_layers(neuron_address_t src,
     }
 }
 
-void create_connections(const conn_descr_coll_t &descriptions)
+void create_connections(phead_t phead,const conn_descr_coll_t &descriptions)
 {
     //<nof_cons, ferment, delay>;
     for (auto dsc = descriptions.begin(); dsc != descriptions.end(); ++dsc)
@@ -90,7 +91,7 @@ void create_connections(const conn_descr_coll_t &descriptions)
                 clock_count_t delay = dsc->delay;
                 if (delay == 0)
                     delay = calc_delay({dsc->src_layer, src_row, src_col}, {dsc->trg_layer, trg_row, trg_col});
-                create_synapses_between_2_layers({dsc->src_layer, src_row, src_col},
+                create_synapses_between_2_layers(phead, {dsc->src_layer, src_row, src_col},
                                                  {dsc->trg_layer, trg_row, trg_col},
                                                  dsc->ferment,
                                                  dsc->radius,
@@ -114,12 +115,12 @@ void create_layers(const network_descr_t &dsc)
  * @brief Creates net
  * @param dsc net description
  */
-void create_net(const network_descr_t &dsc)
+void create_net(phead_t phead, const network_descr_t &dsc)
 {
     create_layers(dsc);
     phead->pretina = static_cast<retina_layer_t *>(phead->layers[0].get());
     phead->pretina->p_eyes_optics = phead->p_eyes_optics;
-    create_connections(dsc.conn_descriptions);
+    create_connections(phead, dsc.conn_descriptions);
 }
 
 std::ostream &operator<<(std::ostream &os, const neuron_address_t &s)
@@ -263,24 +264,24 @@ std::ostream &operator<<(std::ostream &os, const head_t &h)
 }
 
 template <typename T>
-std::shared_ptr<layer_t> emplace_layer_create_neurons(layer_dim_t rows, layer_dim_t cols)
+std::shared_ptr<layer_t> emplace_layer_create_neurons(phead_t phead,layer_dim_t rows, layer_dim_t cols)
 {
     return phead->layers.emplace_back(std::make_shared<T>(rows, cols));
 }
 
-std::shared_ptr<layer_t> create_layer_neurons(TNN::layer_type ltype, layer_dim_t rows, layer_dim_t cols)
+std::shared_ptr<layer_t> create_layer_neurons(phead_t phead, TNN::layer_type ltype, layer_dim_t rows, layer_dim_t cols)
 {
     std::shared_ptr<layer_t> l;
     switch ((int)ltype)
     {
     case TNN::RETINA:
-        l = emplace_layer_create_neurons<retina_layer_t>(rows, cols);
+        l = emplace_layer_create_neurons<retina_layer_t>(phead, rows, cols);
         break;
     case TNN::CORTEX:
-        l = emplace_layer_create_neurons<cortex_layer_t>(rows, cols);
+        l = emplace_layer_create_neurons<cortex_layer_t>(phead, rows, cols);
         break;
     case TNN::COUCHING:
-        l = emplace_layer_create_neurons<mnist_couch_layer_t>(rows, cols);
+        l = emplace_layer_create_neurons<mnist_couch_layer_t>(phead, rows, cols);
         break;
     // case TNN::ACTUATOR:
     //     l = emplace_layer_create_neurons<actuator_layer_t>(rows, cols);

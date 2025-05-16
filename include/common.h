@@ -55,7 +55,7 @@ struct rgba_t
 };
 
 using scene_t = std::array<std::array<scene_signal_t, mnist_size>, mnist_size>;
-using scenes_t = std::vector<scene_t>;
+
 
 using teach_signal_t = uint16_t;
 
@@ -118,7 +118,6 @@ struct std::hash<address_t>
 
 struct neuron_address_t : address_t
 {
-    neuron_t &ref();
     using address_t::address_t;
 };
 
@@ -194,13 +193,14 @@ using weights_pack_t = std::vector<weight_event_t>;
 using events_output_buf_t = std::unordered_map<address_t, std::unique_ptr<events_pack_t>>;
 using weights_output_buf_t = std::unordered_map<address_t, std::unique_ptr<weights_pack_t>>;
 
-constexpr size_t events_cirular_buffer_size = 50;
+// Tracer interface types -----------------------------------------------
+using tracer_buf_t = std::vector<std::pair<neuron_address_t, std::uint8_t>>;
 
-std::ostream &operator<<(std::ostream &os, TNN::layer_type t);
-std::istream &operator>>(std::istream &is, TNN::layer_type &t);
+// std::ostream &operator<<(std::ostream &os, TNN::layer_type t);
+// std::istream &operator>>(std::istream &is, TNN::layer_type &t);
 
-std::ostream &operator<<(std::ostream &os, TNN::ferment_t t);
-std::istream &operator>>(std::istream &is, TNN::ferment_t &t);
+// std::ostream &operator<<(std::ostream &os, TNN::ferment_t t);
+// std::istream &operator>>(std::istream &is, TNN::ferment_t &t);
 
 struct conn_descr_t
 {
@@ -230,6 +230,19 @@ struct net_timer_t
             cur_time = time();
         return static_cast<layer_dim_t>(cur_time % time_steps);
     }
+};
+
+class head_interface_t
+{
+public:
+    virtual void clear_scene_memory() = 0;
+};
+
+class ptracer_interface_t
+{
+public:
+    // virtual void set_scene_index(layer_dim_t index) = 0;
+    virtual void display_tracer_buf(std::shared_ptr<tracer_buf_t> item) = 0;
 };
 
 // void print_couch();

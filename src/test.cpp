@@ -11,7 +11,7 @@
 
 using namespace TNN;
 
-void main_loop()
+void main_loop(phead_t phead, ptracer_t ptracer)
 {
 
     auto first_time = true;
@@ -19,14 +19,17 @@ void main_loop()
     while (ptracer->poll_for_closed_event())
     {
         std::pair<scene_t *, uint8_t> p;
-        std::shared_ptr<scene_t> pp;
 
         p = pmnist->next_image();
 
         if (p.first == nullptr)
-            break;
-        pp = std::shared_ptr<scene_t>(p.first);
-        phead->p_eyes_optics->set_scene(pp);
+            break; // No more images
+
+        // Set appropriate scene
+        phead->p_eyes_optics->set_scene(p.first);
+        auto index = phead->p_eyes_optics->scene_index;
+        ptracer->set_scene_index(index);
+
         phead->p_eyes_optics->zoom(0, 0, mnist_size, mnist_size);
 
         // Set appropriate label
@@ -41,7 +44,7 @@ void main_loop()
             first_time = false;
         }
 
-        std::chrono::milliseconds timespan(50);
+        std::chrono::milliseconds timespan(100);
         std::this_thread::sleep_for(timespan);
 
         // phead->p_eyes_optics->saccade(1.0);
@@ -56,8 +59,6 @@ void main_loop()
     {
         std::cout << "Error saving network" << std::endl;
     }
-    // phead->print_output(3);
-    // std::cout << "nof events: " << ptracer->nof_events.load() << std::endl;
     phead->go_to_sleep();
 }
 
@@ -68,31 +69,31 @@ void main_loop()
 
 int main()
 {
-    ptracer = std::make_shared<tracer_t>(1720, 1050);
+    auto ptracer = std::move(std::make_shared<tracer_t>(1720, 1050));
+    {
+        auto phead = std::move(std::make_shared<head_t>());
+        ptracer->phead = phead;
 
-    phead = std::move(std::make_shared<head_t>());
-    
-    pmnist = std::make_shared<mnist_set>();
-    pmnist->init_set("../MNIST/train-images-idx3-ubyte",
-                     "../MNIST/train-labels-idx1-ubyte", true);
+        pmnist = std::make_shared<mnist_set>();
+        pmnist->init_set("../MNIST/train-images-idx3-ubyte",
+                         "../MNIST/train-labels-idx1-ubyte", true);
 
-    // quick_exit(0);
+        // quick_exit(0);
 
-    create_net({3,
-                {{TNN::RETINA, mnist_size, mnist_size},
-                 {TNN::CORTEX, 14, 14},
-                 //  {TNN::CORTEX, 7, 7},
-                 //  {TNN::CORTEX, 14, 14},
-                 {TNN::COUCHING, 1, 10}},
+        create_net(network_descr_t({{TNN::RETINA, mnist_size, mnist_size},
+                                    {TNN::CORTEX, mnist_size / 2, mnist_size / 2},
+                                    {TNN::CORTEX, mnist_size / 2, mnist_size / 2},
+                                    //  {TNN::CORTEX, 14, 14},
+                                    {TNN::COUCHING, 1, 10}},
 
-                {
-                    {0, 1, TNN::DOPHAMINE, 1, 1},
-                    {1, 2, TNN::DOPHAMINE, 1, 1} //,
-                    //  {2, 3, TNN::DOPHAMINE, 1, 1},
-                    //  {3, 4, TNN::DOPHAMINE, 1, 1}
-                }});
+                                   {
+                                       {0, 1, TNN::DOPHAMINE, 14, 1},
+                                       {1, 2, TNN::DOPHAMINE, 14, 1},
+                                       {2, 3, TNN::DOPHAMINE, 10, 1},
+                                       //  {3, 4, TNN::DOPHAMINE, 1, 1}
+                                   }));
 
-    main_loop();
-
+        main_loop(phead, ptracer);
+    }
     return 0;
 }

@@ -45,6 +45,10 @@ struct network_descr_t
     layer_dim_t nof_layers;
     std::vector<layer_descr_t> layers_descriptions;
     conn_descr_coll_t conn_descriptions;
+    network_descr_t(std::vector<layer_descr_t> layers_descriptions,
+                    conn_descr_coll_t conn_descriptions) : nof_layers(layers_descriptions.size()),
+                                                           layers_descriptions(layers_descriptions),
+                                                           conn_descriptions(conn_descriptions) {}
 };
 
 void create_net(const network_descr_t &dsc);

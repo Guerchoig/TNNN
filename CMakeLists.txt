@@ -48,10 +48,10 @@ if (MSVC)
        )
 else ()
     target_compile_options(TNN PRIVATE
-        -Wall -Wextra -pedantic -Werror
+        -O0 -Wall -Wextra -pedantic -Werror
     )
    target_compile_options(test PRIVATE
-       -Wall -Wextra -pedantic -Werror
+       -O0 -Wall -Wextra -pedantic -Werror
    )
 
 endif()

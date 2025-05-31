@@ -18,7 +18,7 @@ struct eyes_optics_t
     layer_dim_t top;
     layer_dim_t right;
     layer_dim_t bottom;
-    std::shared_ptr<head_interface_t> phead;
+    head_interface_t *phead;
     std::mutex moving_gaze;
 
     void zoom(int _left, int _top, layer_dim_t _width, layer_dim_t _heigth)
@@ -65,6 +65,24 @@ struct eyes_optics_t
         moving_gaze.unlock();
     }
 
+    scene_signal_t get_signal(layer_dim_t _i, layer_dim_t _j)
+    {
+        auto i = _i + top;
+        auto j = _j + left;
+        if (i < 0)
+            i = 0;
+        if (i >= right)
+            i = right - 1;
+        if (j < 0)
+            j = 0;
+        if (j >= bottom)
+            j = bottom - 1;
+
+        auto res = pscene->at(i).at(j);
+
+        return res;
+    }
+
     void saccade(float dist)
     {
         std::random_device rd;
@@ -82,10 +100,10 @@ struct eyes_optics_t
 
     eyes_optics_t(layer_dim_t width = view_field_def_width,
                   layer_dim_t heigth = view_field_def_heigth,
-                  std::shared_ptr<head_interface_t> phead = nullptr) : scene_index{0}, left{0}, top{0},
-                                                                       right(width - 1),
-                                                                       bottom(heigth - 1),
-                                                                       phead{phead}
+                  head_interface_t *phead = nullptr) : scene_index{0}, left{0}, top{0},
+                                                       right(width - 1),
+                                                       bottom(heigth - 1),
+                                                       phead{phead}
     {
     }
     ~eyes_optics_t()

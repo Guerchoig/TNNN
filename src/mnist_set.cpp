@@ -16,7 +16,7 @@ void mnist_set::init_set(const std::string &img_path,
     {
         throw std::runtime_error("Failed to read image file");
     }
-    i_scene = 0;
+    scene_index = 0;
     res = read_mnist_label_file_flat<labels_t>(labels, lbl_path, limit);
     if (!res)
     {
@@ -25,10 +25,9 @@ void mnist_set::init_set(const std::string &img_path,
     i_label = 0;
 }
 
-std::pair<scene_t*, uint8_t> mnist_set::next_image()
+std::pair<scene_t *, uint8_t> mnist_set::next_image()
 {
-    if(static_cast<size_t>(i_scene) == scenes.size())
+    if (static_cast<size_t>(scene_index) >= mnist_epoques) // scenes.size())
         return {nullptr, 0};
-    return std::pair<scene_t*, uint8_t>(&(scenes[i_scene++]), labels[i_label++]);
+    return std::pair<scene_t *, uint8_t>(&(scenes[scene_index++]), labels[i_label++]);
 }
-

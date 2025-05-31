@@ -15,7 +15,10 @@
 #include <array>
 #include <atomic>
 
+// #define TRACER_DEBUG
+// #define READ_NET_FROM_FILE
 #define DEBUG
+
 #ifdef DEBUG
 #define D(x) std::cout << x
 #define ND std::cout << std::endl
@@ -34,7 +37,7 @@ using scene_signal_t = uint8_t;
 using nof_neurons = long; // +-2,15E+09
 using potential_t = double;
 using weight_t = double;
-using distance_t = unsigned char;
+
 using clock_count_t = long long; // 1,84E+19,
 // negative value means the time have already been processed
 
@@ -42,6 +45,8 @@ template <typename T>
 using vector_2D_t = std::vector<std::vector<T>>;
 
 constexpr size_t mnist_size = 28;
+constexpr uint32_t accuracy_period = 2000;
+constexpr uint32_t mnist_epoques = 13929;
 
 /**
  * @brief Represents a color with red, green, blue, and alpha (transparency) components
@@ -55,7 +60,7 @@ struct rgba_t
 };
 
 using scene_t = std::array<std::array<scene_signal_t, mnist_size>, mnist_size>;
-
+using timed_scene_t = std::array<std::array<std::pair<scene_signal_t, clock_count_t>, mnist_size>, mnist_size>;
 
 using teach_signal_t = uint16_t;
 
@@ -187,11 +192,8 @@ struct weight_event_t
 constexpr uint32_t events_q_size = 1024;
 constexpr uint32_t weigths_q_size = 1024;
 
-using events_pack_t = std::vector<neuron_event_t>;
-using weights_pack_t = std::vector<weight_event_t>;
-
-using events_output_buf_t = std::unordered_map<address_t, std::unique_ptr<events_pack_t>>;
-using weights_output_buf_t = std::unordered_map<address_t, std::unique_ptr<weights_pack_t>>;
+using events_output_buf_t = std::unordered_map<address_t, std::unique_ptr<std::vector<neuron_event_t>>>;
+using weights_output_buf_t = std::unordered_map<address_t, std::unique_ptr<std::vector<weight_event_t>>>;
 
 // Tracer interface types -----------------------------------------------
 using tracer_buf_t = std::vector<std::pair<neuron_address_t, std::uint8_t>>;
@@ -208,7 +210,6 @@ struct conn_descr_t
     layer_dim_t trg_layer;
     TNN::ferment_t ferment; // ferment (signed time of dissolution)
     layer_dim_t radius;
-    clock_count_t delay;
 };
 
 using conn_descr_coll_t = std::vector<conn_descr_t>;
@@ -218,17 +219,13 @@ constexpr layer_dim_t time_steps = 10000;
 
 struct net_timer_t
 {
-    std::chrono::time_point<std::chrono::high_resolution_clock> work;
-    net_timer_t() : work(std::chrono::high_resolution_clock::now()) {}
+    // std::chrono::time_point<std::chrono::high_resolution_clock> work;
+    // net_timer_t() : work(std::chrono::high_resolution_clock::now()) {}
+    std::atomic<clock_count_t> time_counter = 0;
     clock_count_t time()
     {
-        return std::chrono::high_resolution_clock::now().time_since_epoch().count();
-    }
-    layer_dim_t time_index(clock_count_t cur_time = 0)
-    {
-        if (!cur_time)
-            cur_time = time();
-        return static_cast<layer_dim_t>(cur_time % time_steps);
+        return time_counter++;
+        // return std::chrono::high_resolution_clock::now().time_since_epoch().count();
     }
 };
 
@@ -238,12 +235,41 @@ public:
     virtual void clear_scene_memory() = 0;
 };
 
-class ptracer_interface_t
+class tracer_interface_t
 {
 public:
-    // virtual void set_scene_index(layer_dim_t index) = 0;
     virtual void display_tracer_buf(std::shared_ptr<tracer_buf_t> item) = 0;
 };
 
 // void print_couch();
 inline unsigned nof_event_threads = 0;
+
+struct metrics_t
+{
+    enum results_t
+    {
+        PT = 0,
+        NT = 1,
+        PF = 2,
+        NF = 3
+    };
+    std::array<std::atomic<uint64_t>, 4> results = {0, 0, 0, 0};
+    std::atomic<float> accuracy = 0.0;
+    std::atomic<uint32_t> count = 0;
+
+    float get_accuracy(results_t res)
+    {
+        results[res].fetch_add(1, std::memory_order_relaxed);
+
+        accuracy.store(static_cast<float>(results[results_t::PT] + results[results_t::NT]) /
+                       (results[results_t::PT] + results[results_t::NT] + results[results_t::PF] + results[results_t::NF]));
+
+        auto acc_res = accuracy.load();
+
+        if (!(count.load() % accuracy_period))
+            std::cout << "Accuracy: " << acc_res << std::endl;
+        count.fetch_add(1);
+
+        return acc_res;
+    }
+};

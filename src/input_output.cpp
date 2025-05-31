@@ -22,12 +22,11 @@ double calc_delay(neuron_address_t src,
     return res;
 }
 
-void create_synapses_between_2_layers(phead_t phead,
+void create_synapses_between_2_layers(head_t *phead,
                                       neuron_address_t src,
                                       neuron_address_t trg,
                                       TNN::ferment_t ferment,
-                                      layer_dim_t radius,
-                                      [[maybe_unused]] clock_count_t delay)
+                                      layer_dim_t radius)
 {
     auto &synapses = phead->neuron_ref(src).synapses;
 
@@ -52,13 +51,13 @@ void create_synapses_between_2_layers(phead_t phead,
             if (std::make_tuple(src.layer, src.row, src.col) != std::make_tuple(trg.layer, _row, _col))
             {
                 neuron_address_t adr{trg.layer, _row, _col};
-                synapses.emplace_back(/*0L, */ w(gen), ferment, delay, std::move(adr));
+                synapses.emplace_back(/*0L, */ w(gen), ferment, std::move(adr));
             }
         }
     }
 }
 
-void create_connections(phead_t phead,const conn_descr_coll_t &descriptions)
+void create_connections(head_t *phead, const conn_descr_coll_t &descriptions)
 {
     //<nof_cons, ferment, delay>;
     for (auto dsc = descriptions.begin(); dsc != descriptions.end(); ++dsc)
@@ -88,24 +87,21 @@ void create_connections(phead_t phead,const conn_descr_coll_t &descriptions)
             {
                 auto src_col = static_cast<layer_dim_t>(it_col - it_row->begin());
                 auto trg_col = static_cast<layer_dim_t>(std::round(src_col * col_ratio));
-                clock_count_t delay = dsc->delay;
-                if (delay == 0)
-                    delay = calc_delay({dsc->src_layer, src_row, src_col}, {dsc->trg_layer, trg_row, trg_col});
+
                 create_synapses_between_2_layers(phead, {dsc->src_layer, src_row, src_col},
                                                  {dsc->trg_layer, trg_row, trg_col},
                                                  dsc->ferment,
-                                                 dsc->radius,
-                                                 delay);
+                                                 dsc->radius);
             }
         }
     }
 }
 
-void create_layers(const network_descr_t &dsc)
+void create_layers(head_t *phead, const network_descr_t &dsc)
 {
     for (layer_dim_t i = 0; i < dsc.nof_layers; ++i)
     {
-        auto l = create_layer_neurons(dsc.layers_descriptions[i].type,
+        auto l = create_layer_neurons(phead, dsc.layers_descriptions[i].type,
                                       dsc.layers_descriptions[i].dimensions.nof_rows,
                                       dsc.layers_descriptions[i].dimensions.nof_cols);
     }
@@ -115,12 +111,13 @@ void create_layers(const network_descr_t &dsc)
  * @brief Creates net
  * @param dsc net description
  */
-void create_net(phead_t phead, const network_descr_t &dsc)
+void create_net(head_t *phead, const network_descr_t &dsc)
 {
-    create_layers(dsc);
+    create_layers(phead, dsc);
     phead->pretina = static_cast<retina_layer_t *>(phead->layers[0].get());
     phead->pretina->p_eyes_optics = phead->p_eyes_optics;
     create_connections(phead, dsc.conn_descriptions);
+    phead->connections = std::move(dsc.conn_descriptions);
 }
 
 std::ostream &operator<<(std::ostream &os, const neuron_address_t &s)
@@ -158,8 +155,7 @@ std::istream &operator>>(std::istream &is, TNN::ferment_t &f)
 std::ostream &operator<<(std::ostream &os, const synapse_t &s)
 {
 
-    os << "w: " << s.weight << " f: " << s.ferment << " dly: "
-       << s.delay << " taddr: " << s.target_addr << std::endl;
+    os << "w: " << s.weight << " f: " << s.ferment << " taddr: " << s.target_addr << std::endl;
     return os;
 }
 
@@ -168,7 +164,6 @@ std::istream &operator>>(std::istream &is, synapse_t &s)
     std::string dumm_str;
     is >> dumm_str >> s.weight   //
         >> dumm_str >> s.ferment //
-        >> dumm_str >> s.delay   //
         >> dumm_str >> s.target_addr;
     return is;
 }
@@ -264,12 +259,12 @@ std::ostream &operator<<(std::ostream &os, const head_t &h)
 }
 
 template <typename T>
-std::shared_ptr<layer_t> emplace_layer_create_neurons(phead_t phead,layer_dim_t rows, layer_dim_t cols)
+std::shared_ptr<layer_t> emplace_layer_create_neurons(head_t *phead, layer_dim_t rows, layer_dim_t cols)
 {
     return phead->layers.emplace_back(std::make_shared<T>(rows, cols));
 }
 
-std::shared_ptr<layer_t> create_layer_neurons(phead_t phead, TNN::layer_type ltype, layer_dim_t rows, layer_dim_t cols)
+std::shared_ptr<layer_t> create_layer_neurons(head_t *phead, TNN::layer_type ltype, layer_dim_t rows, layer_dim_t cols)
 {
     std::shared_ptr<layer_t> l;
     switch ((int)ltype)
@@ -330,4 +325,94 @@ std::istream &operator>>(std::istream &is, head_t &h)
         }
     }
     return is;
+}
+
+std::ostream &operator<<(std::ostream &os, const conn_descr_t &connection)
+{
+    os << connection.src_layer << " " << connection.trg_layer << " " << connection.ferment << " " << connection.radius << std::endl;
+    return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const conn_descr_coll_t &connections)
+{
+    os << connections.size() << std::endl;
+    for (auto it = connections.begin(); it != connections.end(); ++it)
+    {
+        os << *it;
+    }
+    return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const layer_descr_t &dsc)
+{
+    const char *types[5]{"NOLAYER\0", "RETINA\0", "CORTEX\0", "COUCHING\0", "ACTUATOR\0"};
+    os << types[dsc.type] << " " << dsc.dimensions.nof_rows << " " << dsc.dimensions.nof_cols << std::endl;
+    return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const std::vector<layer_descr_t> &dsc)
+{
+    os << dsc.size() << std::endl;
+    for (auto it = dsc.begin(); it != dsc.end(); ++it)
+    {
+        os << *it;
+    }
+    return os;
+}
+
+std::ostream &operator<<(std::ostream &os, const network_descr_t &dsc)
+{
+    os << dsc.nof_layers << std::endl;
+    for (auto it = dsc.layers_descriptions.begin(); it != dsc.layers_descriptions.end(); ++it)
+    {
+        os << *it << std::endl;
+    }
+    os << dsc.conn_descriptions << std::endl;
+    return os;
+}
+
+void head_t::save_weights_to_file(std::string file_name, [[maybe_unused]] std::shared_ptr<tracer_t> ptracer)
+{
+    try
+    {
+#ifdef TRACER_DEBUG
+        ptracer->lock_screen();
+#endif
+
+        std::ofstream ofs(file_name);
+
+        ofs << layers.size() << std::endl;
+        
+        // Make layers' description
+        std::vector<layer_descr_t> layers_descriptions;
+        for (auto it = layers.begin(); it != layers.end(); ++it)
+        {
+            layers_descriptions.emplace_back((*it)->ltype, rc_t((*it)->neurons.size(), (*it)->neurons[0].size()));
+        }
+        
+        // Make network's description
+        network_descr_t network_dsc(layers_descriptions, connections);
+        ofs << network_dsc << std::endl; 
+
+        ofs.close();
+#ifdef TRACER_DEBUG
+        ptracer->unlock_screen();
+#endif
+    }
+    catch (...)
+    {
+        std::cout << "Error saving weights" << std::endl;
+    }
+}
+
+void head_t::read_weights_from_file(std::string file_name, [[maybe_unused]] std::shared_ptr<tracer_t> ptracer)
+{
+    try
+    {
+        std::ifstream ifs(file_name);
+    }
+    catch (...)
+    {
+        std::cout << "Error reading weights" << std::endl;
+    }
 }

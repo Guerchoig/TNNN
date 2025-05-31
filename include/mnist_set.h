@@ -16,11 +16,11 @@ struct mnist_set
 {
     std::vector<scene_t> scenes;
     labels_t labels;
-    layer_dim_t i_scene;
+    uint64_t scene_index = 0;
     layer_dim_t i_label;
     void init_set(const std::string &img_path,
                   const std::string &lbl_path,
                   bool is_training);
-    std::pair<scene_t *, uint8_t> next_image(); 
+    std::pair<scene_t *, uint8_t> next_image();
 };
 inline std::shared_ptr<mnist_set> pmnist;

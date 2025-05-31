@@ -86,6 +86,7 @@ struct tracer_t
 
     bool poll_for_closed_event()
     {
+
         std::lock_guard<std::mutex> lock(sfml_mutex);
         sf::Event event;
 
@@ -101,14 +102,9 @@ struct tracer_t
             }
         }
         window.setActive(false);
+
         return res;
     }
-
-    // void close_window()
-    // {
-    //     std::lock_guard<std::mutex> lock(sfml_mutex);
-    //     window.close();
-    // }
 
     void fade_out_sprites()
     {
@@ -120,7 +116,11 @@ struct tracer_t
                 }
     }
 
-    void display_tracer_buf(std::shared_ptr<tracer_buf_t> item)
+    void lock_screen() { sfml_mutex.lock(); }
+
+    void unlock_screen() { sfml_mutex.unlock(); }
+
+    void    display_tracer_buf(std::shared_ptr<tracer_buf_t> item)
     {
         std::lock_guard<std::mutex> lock(sfml_mutex);
 
@@ -165,9 +165,10 @@ struct tracer_t
         window.draw(black_mask);
         window.draw(text);
     }
+
     tracer_t(uint32_t h_resolution,
              uint32_t v_resolution) : h_resolution(h_resolution),
-                                                                   v_resolution(v_resolution)
+                                      v_resolution(v_resolution)
 
     {
         for (unsigned i = 0; i < tr::nof_sprites; ++i)

@@ -8,17 +8,39 @@
 #include <sstream>
 #include <fstream>
 #include <optional>
+#include <csignal>
 
 using namespace TNN;
+constexpr unsigned nof_saccades = 50;
+
+inline std::atomic<bool> stop = false;
+/**
+ * @brief Handles CTRL-C signal to softly shutdown the server
+ * @param _signal
+ */
+void SIGINT_handler([[maybe_unused]] int _signal)
+{
+    stop.store(true); // stop the coro loop
+}
 
 void main_loop(phead_t phead, ptracer_t ptracer)
 {
+    struct sigaction handler;
+    handler.sa_handler = SIGINT_handler;
+    sigemptyset(&handler.sa_mask);
+    handler.sa_flags = 0;
+    sigaction(SIGINT, &handler, NULL);
 
     auto first_time = true;
-
+#ifdef TRACER_DEBUG
     while (ptracer->poll_for_closed_event())
+#else
+    while (!stop.load())
+#endif
     {
         std::pair<scene_t *, uint8_t> p;
+
+        // Establish CTRL-C handler
 
         p = pmnist->next_image();
 
@@ -27,9 +49,10 @@ void main_loop(phead_t phead, ptracer_t ptracer)
 
         // Set appropriate scene
         phead->p_eyes_optics->set_scene(p.first);
+#ifdef TRACER_DEBUG
         auto index = phead->p_eyes_optics->scene_index;
         ptracer->set_scene_index(index);
-
+#endif
         phead->p_eyes_optics->zoom(0, 0, mnist_size, mnist_size);
 
         // Set appropriate label
@@ -40,25 +63,19 @@ void main_loop(phead_t phead, ptracer_t ptracer)
         // Think about scene
         if (first_time)
         {
-            phead->wake_up();
+            phead->wake_up(ptracer);
             first_time = false;
         }
 
-        std::chrono::milliseconds timespan(100);
+        std::chrono::milliseconds timespan(200);
+        // for (unsigned i = 0; i < nof_saccades; ++i)
+        // {
         std::this_thread::sleep_for(timespan);
-
         // phead->p_eyes_optics->saccade(1.0);
+        // }
     }
 
-    try
-    {
-        std::fstream ofile("../networks/net.out", std::ios::out | std::ios::trunc);
-        ofile << *phead;
-    }
-    catch (...)
-    {
-        std::cout << "Error saving network" << std::endl;
-    }
+    // Signal stop processing to workers
     phead->go_to_sleep();
 }
 
@@ -69,31 +86,55 @@ void main_loop(phead_t phead, ptracer_t ptracer)
 
 int main()
 {
+#ifdef TRACER_DEBUG
     auto ptracer = std::move(std::make_shared<tracer_t>(1720, 1050));
+#endif
     {
         auto phead = std::move(std::make_shared<head_t>());
+#ifdef TRACER_DEBUG
         ptracer->phead = phead;
-
+#endif
         pmnist = std::make_shared<mnist_set>();
         pmnist->init_set("../MNIST/train-images-idx3-ubyte",
                          "../MNIST/train-labels-idx1-ubyte", true);
 
         // quick_exit(0);
+#ifndef READ_NET_FROM_FILE
+        // Create network by description
+        create_net(phead.get(), network_descr_t({{TNN::RETINA, mnist_size, mnist_size},
+                                                 {TNN::CORTEX, mnist_size, mnist_size},
+                                                 {TNN::CORTEX, mnist_size, mnist_size},
+                                                 //  {TNN::CORTEX, 14, 14},
+                                                 {TNN::COUCHING, 1, 10}},
 
-        create_net(network_descr_t({{TNN::RETINA, mnist_size, mnist_size},
-                                    {TNN::CORTEX, mnist_size / 2, mnist_size / 2},
-                                    {TNN::CORTEX, mnist_size / 2, mnist_size / 2},
-                                    //  {TNN::CORTEX, 14, 14},
-                                    {TNN::COUCHING, 1, 10}},
+                                                {
+                                                    {0, 1, TNN::DOPHAMINE, 14},
+                                                    {1, 2, TNN::DOPHAMINE, 14},
+                                                    {2, 3, TNN::DOPHAMINE, 10},
+                                                    //  {3, 4, TNN::DOPHAMINE, 1}
+                                                }));
 
-                                   {
-                                       {0, 1, TNN::DOPHAMINE, 14, 1},
-                                       {1, 2, TNN::DOPHAMINE, 14, 1},
-                                       {2, 3, TNN::DOPHAMINE, 10, 1},
-                                       //  {3, 4, TNN::DOPHAMINE, 1, 1}
-                                   }));
+#else
+        // Read network from file
+        try
+        {
+            std::fstream ifile("../networks/net.out", std::ios::in);
+            ifile >> *phead;
+        }
+        catch (...)
+        {
+            std::cout << "Error reading network" << std::endl;
+        }
+#endif
 
+#ifdef TRACER_DEBUG
         main_loop(phead, ptracer);
+        phead->save_weights_to_file("../networks/net.out", ptracer);
+#else
+        main_loop(phead, nullptr);
+        phead->save_weights_to_file("../networks/net.out", nullptr);
+#endif
     }
+    std::cout << "Done" << std::endl;
     return 0;
 }

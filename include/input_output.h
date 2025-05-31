@@ -45,6 +45,7 @@ struct network_descr_t
     layer_dim_t nof_layers;
     std::vector<layer_descr_t> layers_descriptions;
     conn_descr_coll_t conn_descriptions;
+    network_descr_t() {};
     network_descr_t(std::vector<layer_descr_t> layers_descriptions,
                     conn_descr_coll_t conn_descriptions) : nof_layers(layers_descriptions.size()),
                                                            layers_descriptions(layers_descriptions),
@@ -66,18 +67,18 @@ std::ostream &operator<<(std::ostream &os, const head_t &s);
 std::istream &operator>>(std::istream &is, head_t &s);
 
 std::ostream &operator<<(std::ostream &os, const conn_descr_t &connection);
-std::ostream &operator>>(std::ostream &os, conn_descr_t &connection);
+std::istream &operator>>(std::istream &is, conn_descr_t &connection);
 
 std::ostream &operator<<(std::ostream &os, const conn_descr_coll_t &connections);
-std::ostream &operator>>(std::ostream &os, conn_descr_coll_t &connections);
+std::istream &operator>>(std::istream &is, conn_descr_coll_t &connections);
 
 std::ostream &operator<<(std::ostream &os, const layer_descr_t &dsc);
-std::ostream &operator>>(std::ostream &os, layer_descr_t &dsc);
+std::istream &operator>>(std::istream &is, layer_descr_t &dsc);
 
 std::ostream &operator<<(std::ostream &os, const std::vector<layer_descr_t> &dsc);
 std::istream &operator>>(std::istream &is, std::vector<layer_descr_t> &dsc);
 
 std::ostream &operator<<(std::ostream &os, const network_descr_t &dsc);
-std::ostream &operator>>(std::ostream &os, network_descr_t &dsc);
+std::istream &operator>>(std::istream &is, network_descr_t &dsc);
 
 std::shared_ptr<layer_t> create_layer_neurons(head_t *phead, TNN::layer_type type, layer_dim_t rows = 0, layer_dim_t cols = 0);

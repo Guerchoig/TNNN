@@ -137,8 +137,10 @@ std::istream &operator>>(std::istream &is, layer_type &l_type)
     std::string layer_type_string;
 
     while (layer_type_string.empty() || layer_type_string.compare(" ") == 0) // skip newlines
-        std::getline(is, layer_type_string);
-
+        std::getline(is, layer_type_string, ' ');
+    auto n = layer_type_string.find_first_of("RC");
+    if (n != std::string::npos)
+        layer_type_string = layer_type_string.substr(n);
     l_type = m.at(layer_type_string);
     return is;
 }
@@ -333,6 +335,12 @@ std::ostream &operator<<(std::ostream &os, const conn_descr_t &connection)
     return os;
 }
 
+std::istream &operator>>(std::istream &is, conn_descr_t &connection)
+{
+    is >> connection.src_layer >> connection.trg_layer >> connection.ferment >> connection.radius;
+    return is;
+}
+
 std::ostream &operator<<(std::ostream &os, const conn_descr_coll_t &connections)
 {
     os << connections.size() << std::endl;
@@ -343,11 +351,30 @@ std::ostream &operator<<(std::ostream &os, const conn_descr_coll_t &connections)
     return os;
 }
 
+std::istream &operator>>(std::istream &is, conn_descr_coll_t &connections)
+{
+    layer_dim_t nof_connections;
+    is >> nof_connections;
+    connections.reserve(nof_connections);
+    for (layer_dim_t i = 0; i < nof_connections; ++i)
+    {
+        connections.emplace_back();
+        is >> connections.back();
+    }
+    return is;
+}
+
 std::ostream &operator<<(std::ostream &os, const layer_descr_t &dsc)
 {
     const char *types[5]{"NOLAYER\0", "RETINA\0", "CORTEX\0", "COUCHING\0", "ACTUATOR\0"};
     os << types[dsc.type] << " " << dsc.dimensions.nof_rows << " " << dsc.dimensions.nof_cols << std::endl;
     return os;
+}
+
+std::istream &operator>>(std::istream &is, layer_descr_t &dsc)
+{
+    is >> dsc.type >> dsc.dimensions.nof_rows >> dsc.dimensions.nof_cols;
+    return is;
 }
 
 std::ostream &operator<<(std::ostream &os, const std::vector<layer_descr_t> &dsc)
@@ -360,18 +387,35 @@ std::ostream &operator<<(std::ostream &os, const std::vector<layer_descr_t> &dsc
     return os;
 }
 
+std::istream &operator>>(std::istream &is, std::vector<layer_descr_t> &dsc)
+{
+    layer_dim_t nof_layers;
+    is >> nof_layers;
+    dsc.reserve(nof_layers);
+    for (layer_dim_t i = 0; i < nof_layers; ++i)
+    {
+        dsc.emplace_back();
+        is >> dsc.back();
+    }
+    return is;
+}
+
 std::ostream &operator<<(std::ostream &os, const network_descr_t &dsc)
 {
-    os << dsc.nof_layers << std::endl;
-    for (auto it = dsc.layers_descriptions.begin(); it != dsc.layers_descriptions.end(); ++it)
-    {
-        os << *it << std::endl;
-    }
+    os << dsc.layers_descriptions;
     os << dsc.conn_descriptions << std::endl;
     return os;
 }
 
-void head_t::save_weights_to_file(std::string file_name, [[maybe_unused]] std::shared_ptr<tracer_t> ptracer)
+std::istream &operator>>(std::istream &is, network_descr_t &dsc)
+{
+    is >> dsc.layers_descriptions;
+    dsc.nof_layers = dsc.layers_descriptions.size();
+    is >> dsc.conn_descriptions;
+    return is;
+}
+
+void head_t::save_model_to_file(std::string file_name, [[maybe_unused]] std::shared_ptr<tracer_t> ptracer)
 {
     try
     {
@@ -381,18 +425,16 @@ void head_t::save_weights_to_file(std::string file_name, [[maybe_unused]] std::s
 
         std::ofstream ofs(file_name);
 
-        ofs << layers.size() << std::endl;
-        
         // Make layers' description
         std::vector<layer_descr_t> layers_descriptions;
         for (auto it = layers.begin(); it != layers.end(); ++it)
         {
             layers_descriptions.emplace_back((*it)->ltype, rc_t((*it)->neurons.size(), (*it)->neurons[0].size()));
         }
-        
+
         // Make network's description
         network_descr_t network_dsc(layers_descriptions, connections);
-        ofs << network_dsc << std::endl; 
+        ofs << network_dsc;
 
         ofs.close();
 #ifdef TRACER_DEBUG
@@ -405,11 +447,17 @@ void head_t::save_weights_to_file(std::string file_name, [[maybe_unused]] std::s
     }
 }
 
-void head_t::read_weights_from_file(std::string file_name, [[maybe_unused]] std::shared_ptr<tracer_t> ptracer)
+void head_t::read_model_from_file(std::string file_name, [[maybe_unused]] std::shared_ptr<tracer_t> ptracer)
 {
     try
     {
         std::ifstream ifs(file_name);
+
+        network_descr_t network_dsc;
+        ifs >> network_dsc;
+
+        create_net(this, network_dsc);
+        ifs.close();
     }
     catch (...)
     {

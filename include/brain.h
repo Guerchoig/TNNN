@@ -274,8 +274,8 @@ struct head_t : head_interface_t
 		return _layer.neuron_ref(addr.row, addr.col);
 	}
 
-	void save_weights_to_file(std::string file_name, [[maybe_unused]] std::shared_ptr<tracer_t> ptracer);
-	void read_weights_from_file(std::string file_name, [[maybe_unused]] std::shared_ptr<tracer_t> ptracer);
+	void save_model_to_file(std::string file_name, [[maybe_unused]] std::shared_ptr<tracer_t> ptracer);
+	void read_model_from_file(std::string file_name, [[maybe_unused]] std::shared_ptr<tracer_t> ptracer);
 
 	head_t();
 };

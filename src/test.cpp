@@ -9,6 +9,7 @@
 #include <fstream>
 #include <optional>
 #include <csignal>
+#include <stdio.h>
 
 using namespace TNN;
 constexpr unsigned nof_saccades = 50;
@@ -21,6 +22,7 @@ inline std::atomic<bool> stop = false;
 void SIGINT_handler([[maybe_unused]] int _signal)
 {
     stop.store(true); // stop the coro loop
+    // getchar();
 }
 
 void main_loop(phead_t phead, ptracer_t ptracer)
@@ -116,23 +118,15 @@ int main()
 
 #else
         // Read network from file
-        try
-        {
-            std::fstream ifile("../networks/net.out", std::ios::in);
-            ifile >> *phead;
-        }
-        catch (...)
-        {
-            std::cout << "Error reading network" << std::endl;
-        }
+        phead->read_model_from_file("../networks/net.out", nullptr);
 #endif
 
 #ifdef TRACER_DEBUG
         main_loop(phead, ptracer);
-        phead->save_weights_to_file("../networks/net.out", ptracer);
+        phead->save_model_to_file("../networks/net.out", ptracer);
 #else
         main_loop(phead, nullptr);
-        phead->save_weights_to_file("../networks/net.out", nullptr);
+        phead->save_model_to_file("../networks/net.out", nullptr);
 #endif
     }
     std::cout << "Done" << std::endl;

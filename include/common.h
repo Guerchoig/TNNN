@@ -16,7 +16,7 @@
 #include <atomic>
 
 // #define TRACER_DEBUG
-// #define READ_NET_FROM_FILE
+#define READ_NET_FROM_FILE
 #define DEBUG
 
 #ifdef DEBUG

@@ -12,37 +12,45 @@
 #include <stdio.h>
 
 using namespace TNN;
+using namespace std;
+
 constexpr unsigned nof_saccades = 50;
 
-inline std::atomic<bool> stop = false;
+inline std::atomic<bool> stopp = false;
 /**
  * @brief Handles CTRL-C signal to softly shutdown the server
  * @param _signal
  */
-void SIGINT_handler([[maybe_unused]] int _signal)
+void fSIGINT_handler([[maybe_unused]] int _signal)
 {
-    stop.store(true); // stop the coro loop
-    // getchar();
+    stopp.store(true); // stop the coro loop
 }
 
 void main_loop(phead_t phead, ptracer_t ptracer)
 {
-    struct sigaction handler;
-    handler.sa_handler = SIGINT_handler;
-    sigemptyset(&handler.sa_mask);
-    handler.sa_flags = 0;
-    sigaction(SIGINT, &handler, NULL);
+    // Block SIGINT in all threads (including future threads)
+    sigset_t mask;
+    sigemptyset(&mask);
+    sigaddset(&mask, SIGINT);
+    pthread_sigmask(SIG_BLOCK, &mask, nullptr);
+
+    // Setup signal handler
+    struct sigaction sa;
+    sa.sa_handler = fSIGINT_handler;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;
+    sigaction(SIGINT, &sa, nullptr);
+
+    phead->couching_mode.store(true);
 
     auto first_time = true;
 #ifdef TRACER_DEBUG
     while (ptracer->poll_for_closed_event())
 #else
-    while (!stop.load())
+    while (!stopp.load())
 #endif
     {
         std::pair<scene_t *, uint8_t> p;
-
-        // Establish CTRL-C handler
 
         p = pmnist->next_image();
 
@@ -54,22 +62,28 @@ void main_loop(phead_t phead, ptracer_t ptracer)
 #ifdef TRACER_DEBUG
         auto index = phead->p_eyes_optics->scene_index;
         ptracer->set_scene_index(index);
+#else
+        if (!(phead->p_eyes_optics->scene_index % 100))
+            std::cout << phead->p_eyes_optics->scene_index << std::endl;
 #endif
         phead->p_eyes_optics->zoom(0, 0, mnist_size, mnist_size);
 
         // Set appropriate label
         auto pl = phead->layers.back();
-        auto p_couch = std::static_pointer_cast<mnist_couch_layer_t>(pl);
+        auto p_couch = std::static_pointer_cast<couching_layer_t>(pl);
         p_couch->set_label(p.second);
 
         // Think about scene
         if (first_time)
         {
+            // Start workers
             phead->wake_up(ptracer);
+            // Unblock SIGINT only in main thread
+            pthread_sigmask(SIG_UNBLOCK, &mask, nullptr);
             first_time = false;
         }
 
-        std::chrono::milliseconds timespan(200);
+        std::chrono::milliseconds timespan(image_show_delay);
         // for (unsigned i = 0; i < nof_saccades; ++i)
         // {
         std::this_thread::sleep_for(timespan);
@@ -77,7 +91,7 @@ void main_loop(phead_t phead, ptracer_t ptracer)
         // }
     }
 
-    // Signal stop processing to workers
+    // Stop workers
     phead->go_to_sleep();
 }
 
@@ -88,6 +102,7 @@ void main_loop(phead_t phead, ptracer_t ptracer)
 
 int main()
 {
+
 #ifdef TRACER_DEBUG
     auto ptracer = std::move(std::make_shared<tracer_t>(1720, 1050));
 #endif
@@ -104,17 +119,15 @@ int main()
 #ifndef READ_NET_FROM_FILE
         // Create network by description
         create_net(phead.get(), network_descr_t({{TNN::RETINA, mnist_size, mnist_size},
-                                                 {TNN::CORTEX, mnist_size, mnist_size},
-                                                 {TNN::CORTEX, mnist_size, mnist_size},
-                                                 //  {TNN::CORTEX, 14, 14},
+                                                 {TNN::CORTEX, 8, 8},
+                                                 {TNN::CORTEX, 8, 8},
+                                                 //  {TNN::CORTEX, mnist_size / 4, mnist_size / 4},
                                                  {TNN::COUCHING, 1, 10}},
 
-                                                {
-                                                    {0, 1, TNN::DOPHAMINE, 14},
-                                                    {1, 2, TNN::DOPHAMINE, 14},
-                                                    {2, 3, TNN::DOPHAMINE, 10},
-                                                    //  {3, 4, TNN::DOPHAMINE, 1}
-                                                }));
+                                                {{0, 1, TNN::DOPHAMINE, 8 / 2},
+                                                 {1, 2, TNN::DOPHAMINE, 8 / 2},
+                                                 //  {2, 3, TNN::DOPHAMINE, 10 / 2}
+                                                 {2, 3, TNN::DOPHAMINE, 10 / 2}}));
 
 #else
         // Read network from file

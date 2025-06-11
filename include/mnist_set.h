@@ -17,7 +17,7 @@ struct mnist_set
     std::vector<scene_t> scenes;
     labels_t labels;
     uint64_t scene_index = 0;
-    layer_dim_t i_label;
+    brain_coord_t i_label;
     void init_set(const std::string &img_path,
                   const std::string &lbl_path,
                   bool is_training);

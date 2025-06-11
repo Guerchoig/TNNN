@@ -21,30 +21,36 @@ using input_val_t = int;
 constexpr double spike_velocity = 1.0;
 
 // Neuron's params-----------------------------------------------
-constexpr potential_t delta_u_mem = 0.0005;
-constexpr potential_t initial_neuron_threshold = 0.5;
-constexpr potential_t u_rest = -0.2;
-constexpr potential_t cortex_leak_alpha = 0.5E-5;
-constexpr potential_t scene_memory_leak_alpha = 1E-3;
+constexpr potential_t membrana_resistance = 0.02;
+constexpr potential_t max_neuron_threshold = membrana_resistance * 30;
+constexpr potential_t neuron_threshold_alpha = 1.0E-2;
+constexpr potential_t u_rest = 0.0;
+constexpr potential_t cortex_tau = 160.0; //  ms
+constexpr potential_t cortex_leak_alpha = 1 / cortex_tau;
+constexpr potential_t scene_memory_leak_alpha = 1 / (cortex_tau * 20); // 20 times slower than cortex_tau;
 
 // Retina's neuron  params------------------------------------------------
 constexpr input_val_t delta_signal_min = 1;
 
 // Visual detector's  params------------------------------------------------
-constexpr input_val_t visual_detector_threshold = 1;
-constexpr potential_t detector_alpha = 0.02;
+// constexpr input_val_t visual_detector_threshold = 1;
+constexpr potential_t detector_alpha = 2.0 / 255.0;
 
 // Weights update  params------------------------------------------------
-constexpr potential_t delta_weight = 0.001; //
-constexpr potential_t weight_leak_alpha = 1E-3;
-constexpr clock_count_t hebb_correlation_time = 2; // tics
+constexpr potential_t max_delta_weight = 0.2; //
+constexpr potential_t weight_tau_plus = 200;  // ms
+constexpr potential_t weight_tau_minus = 200; // ms
+constexpr potential_t weight_leak_alpha_pos = 1 / weight_tau_plus;
+constexpr potential_t weight_leak_alpha_neg = 1 / weight_tau_minus;
+// constexpr clock_count_t hebb_correlation_time = 2; // tics
 
-// Actuator  params-------------------------------------------------
-// constexpr clock_count_t actuator_tau = 1000; // ms
+constexpr clock_count_t empty_time = 0;
+constexpr brain_coord_t empty_area = -1;
 
 //
 //
 // Synapses-----------------------------------------------
+
 struct synapse_t
 {
 	weight_t weight;
@@ -121,11 +127,11 @@ struct neuron_t
 // See also in input_output.h:
 struct area_descr_t
 {
-	layer_dim_t layer_num;
-	layer_dim_t row;
-	layer_dim_t col;
-	layer_dim_t n_by_rows;
-	layer_dim_t n_by_cols;
+	brain_coord_t layer_num;
+	brain_coord_t row;
+	brain_coord_t col;
+	brain_coord_t n_by_rows;
+	brain_coord_t n_by_cols;
 };
 using one_worker_areas_descr_t = std::vector<area_descr_t>;
 using areas_descr_coll_t = std::vector<one_worker_areas_descr_t>;
@@ -144,12 +150,12 @@ using worker_areas_coll_t = std::vector<one_worker_areas_t>;
 
 struct area_bounds_t
 {
-	layer_dim_t row_side = 0;
-	layer_dim_t col_side = 0;
+	brain_coord_t row_side = 0;
+	brain_coord_t col_side = 0;
 	area_bounds_t() {}
-	area_bounds_t(layer_dim_t _row_side,
-				  layer_dim_t _col_side) : row_side(_row_side),
-										   col_side(_col_side) {}
+	area_bounds_t(brain_coord_t _row_side,
+				  brain_coord_t _col_side) : row_side(_row_side),
+											 col_side(_col_side) {}
 };
 
 // Base layer -----------------------------------------------
@@ -159,7 +165,7 @@ struct layer_t
 	TNN::layer_type ltype;
 	vector_2D_t<neuron_t> neurons;
 
-	neuron_t &neuron_ref([[maybe_unused]] layer_dim_t row, [[maybe_unused]] layer_dim_t col)
+	neuron_t &neuron_ref([[maybe_unused]] brain_coord_t row, [[maybe_unused]] brain_coord_t col)
 	{
 		return neurons.at(row).at(col);
 	}
@@ -185,7 +191,8 @@ potential_t retina_leak_and_input(neuron_t &neuron, scene_signal_t signal,
 								  std::pair<scene_signal_t, clock_count_t> &timed_memory_signal,
 								  clock_count_t time_moment);
 potential_t cortex_leak_and_input(neuron_t &neuron, synapse_t &synapse, clock_count_t time_moment);
-void hebbian_weight_update(neuron_t &neuron, synapse_t &synapse, clock_count_t afferent_spike_time);
+
+void stdp_weight_update(neuron_t &neuron, synapse_t &synapse, clock_count_t afferent_spike_time);
 
 using layers_t = std::vector<std::shared_ptr<layer_t>>;
 
@@ -193,7 +200,7 @@ template <typename T>
 concept Is_layer = std::is_base_of_v<layer_t, T>;
 
 template <Is_layer T>
-void create_neurons(T *layer, layer_dim_t rows, layer_dim_t cols);
+void create_neurons(T *layer, layer_place_n_size_t place_n_size);
 
 // Derived layers------------------------------------------------
 
@@ -204,7 +211,7 @@ struct retina_layer_t : public layer_t
 
 	// void set_eyes_optics(std::shared_ptr<eyes_optics_t> _p_eyes_optics) { p_eyes_optics = _p_eyes_optics; }
 	retina_layer_t();
-	retina_layer_t(layer_dim_t rows, layer_dim_t cols);
+	retina_layer_t(layer_place_n_size_t place_n_size);
 	void clear_scene_memories()
 	{
 		for (auto &scene_memory : scene_memories)
@@ -215,19 +222,24 @@ struct retina_layer_t : public layer_t
 struct cortex_layer_t : layer_t
 {
 	cortex_layer_t();
-	cortex_layer_t(layer_dim_t rows, layer_dim_t cols);
+	cortex_layer_t(layer_place_n_size_t place_n_size);
 };
 
-struct mnist_couch_layer_t : layer_t
+/**
+ * @brief In this layer we store the label of the current image.
+ * the synapses just mirror the input synapses to fasciliate weights update
+ * in ajacent layers
+ */
+struct couching_layer_t : layer_t
 {
 	std::atomic<unsigned char> label;
 
-	void set_label(layer_dim_t i_label = 0)
+	void set_label(brain_coord_t i_label = 0)
 	{
 		label.store(i_label);
 	}
-	mnist_couch_layer_t();
-	mnist_couch_layer_t(layer_dim_t rows, layer_dim_t cols);
+	couching_layer_t();
+	couching_layer_t(layer_place_n_size_t place_n_size);
 };
 
 // head_t ------------------------------------------------
@@ -247,6 +259,7 @@ struct head_t : head_interface_t
 
 	std::atomic<bool> finish;
 	conn_descr_coll_t connections;
+	std::atomic<bool> couching_mode = false;
 
 	void make_worker_areas(worker_areas_coll_t &areas_coll, const areas_descr_coll_t &descr_areas_coll);
 
@@ -259,6 +272,10 @@ struct head_t : head_interface_t
 	std::shared_ptr<void> worker_by_addr(address_t area_addr)
 	{
 		return workers.find(area_addr)->second;
+	}
+	int get_label()
+	{
+		return std::static_pointer_cast<couching_layer_t>(layers.back())->label.load();
 	}
 
 	void wake_up(ptracer_t tracer);
@@ -323,15 +340,19 @@ struct tworker_t
 		move_output_weights_to_workers();
 	}
 
-	void cortex_proc([[maybe_unused]] layer_dim_t area_num, [[maybe_unused]] clock_count_t time_moment);
-	void visual_scene_proc([[maybe_unused]] layer_dim_t area_num, clock_count_t time_moment);
-	void prepare_mnist_couch_umems([[maybe_unused]] layer_dim_t area_num, [[maybe_unused]] clock_count_t time_moment);
+	void process_cortex_weights(brain_coord_t area_num, clock_count_t time_moment);
+	void process_cortex_events([[maybe_unused]] brain_coord_t area_num,
+							   [[maybe_unused]] clock_count_t time_moment,
+							   bool couching_mode);
+	void visual_scene_proc([[maybe_unused]] brain_coord_t area_num, clock_count_t time_moment);
+	void cortex_proc([[maybe_unused]] brain_coord_t area_num, [[maybe_unused]] clock_count_t time_moment);
+	void couch_proc([[maybe_unused]] brain_coord_t area_num, [[maybe_unused]] clock_count_t time_moment);
 
 	void pass_event_to_synapses(neuron_t &firing_neuron, neuron_address_t &&addr,
 								clock_count_t time_moment);
 
 	// void put_weight_to_output_buf(neuron_address_t &src_neuron,
-	// 							   layer_dim_t synapse_num,
+	// 							   brain_coord_t synapse_num,
 	// 							   clock_count_t spike_time);
 
 	void execute()
@@ -339,14 +360,8 @@ struct tworker_t
 		static_cast<Derived *>(this)->worker();
 	}
 
-	void join()
-	{
-		static_cast<Derived *>(this)->worker_thread.join();
-	}
-
 	tworker_t(head_t *phead, const one_worker_areas_t &areas,
 			  ptracer_t &ptracer);
-	~tworker_t();
 };
 
 struct retina_worker_t : public tworker_t<retina_worker_t> // Curiously Recurring Template Pattern
@@ -361,15 +376,15 @@ struct cortex_worker_t : public tworker_t<cortex_worker_t> // Curiously Recurrin
 	using tworker_t<cortex_worker_t>::tworker_t;
 };
 
-struct mnist_couch_worker_t : public tworker_t<mnist_couch_worker_t> // Curiously Recurring Template Pattern
+struct couch_worker_t : public tworker_t<couch_worker_t> // Curiously Recurring Template Pattern
 {
-	metrics_t accuracy;
+	metrics_t metrics;
 	void worker();
-	mnist_couch_worker_t(head_t *phead,
-						 const one_worker_areas_t &areas,
-						 ptracer_t &ptracer) : tworker_t<mnist_couch_worker_t>(phead,
-																			   areas,
-																			   ptracer)
+	couch_worker_t(head_t *phead,
+				   const one_worker_areas_t &areas,
+				   ptracer_t &ptracer) : tworker_t<couch_worker_t>(phead,
+																   areas,
+																   ptracer)
 	{
 	}
 };

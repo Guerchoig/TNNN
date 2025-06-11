@@ -12,8 +12,8 @@ constexpr char data_dir[] = "../data/";
 
 struct rc_t
 {
-    layer_dim_t nof_rows;
-    layer_dim_t nof_cols;
+    brain_coord_t nof_rows;
+    brain_coord_t nof_cols;
 };
 
 struct syn_descr_t
@@ -30,7 +30,7 @@ struct neuron_descr_t
     potential_t u_mem;
     potential_t threshold;
     clock_count_t last_fired;
-    layer_dim_t nof_synapses;
+    brain_coord_t nof_synapses;
     std::vector<syn_descr_t> synapses;
 };
 
@@ -42,7 +42,7 @@ struct layer_descr_t
 
 struct network_descr_t
 {
-    layer_dim_t nof_layers;
+    brain_coord_t nof_layers;
     std::vector<layer_descr_t> layers_descriptions;
     conn_descr_coll_t conn_descriptions;
     network_descr_t() {};
@@ -81,4 +81,4 @@ std::istream &operator>>(std::istream &is, std::vector<layer_descr_t> &dsc);
 std::ostream &operator<<(std::ostream &os, const network_descr_t &dsc);
 std::istream &operator>>(std::istream &is, network_descr_t &dsc);
 
-std::shared_ptr<layer_t> create_layer_neurons(head_t *phead, TNN::layer_type type, layer_dim_t rows = 0, layer_dim_t cols = 0);
+std::shared_ptr<layer_t> create_layer_neurons(head_t *phead, TNN::layer_type ltype, layer_place_n_size_t place_n_size);

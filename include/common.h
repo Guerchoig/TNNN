@@ -15,24 +15,24 @@
 #include <array>
 #include <atomic>
 
-// #define TRACER_DEBUG
-#define READ_NET_FROM_FILE
-#define DEBUG
+// Mode of operation parameters
+#define TRACER_DEBUG
+// #define READ_NET_FROM_FILE
+
+// #define DEBUG
 
 #ifdef DEBUG
 #define D(x) std::cout << x
-#define ND std::cout << std::endl
 #define DN(x) std::cout << x << std::endl
 #define DF(x) x
 #else
 #define D(x) ;
-#define ND ;
 #define DN(x) ;
 #define DF(x) ;
 #endif
 
 // using view_dim = unsigned short;
-using layer_dim_t = short; // 65535
+using brain_coord_t = short; // 65535
 using scene_signal_t = uint8_t;
 using nof_neurons = long; // +-2,15E+09
 using potential_t = double;
@@ -45,8 +45,13 @@ template <typename T>
 using vector_2D_t = std::vector<std::vector<T>>;
 
 constexpr size_t mnist_size = 28;
-constexpr uint32_t accuracy_period = 2000;
-constexpr uint32_t mnist_epoques = 13929;
+
+// learning params
+constexpr int image_show_delay = 500; // ms
+constexpr int nof_images_in_learning_epoque = 100;
+constexpr int nof_images_in_test_set = 10;
+constexpr uint32_t accuracy_period = 500;
+constexpr uint32_t mnist_epoques = 20000;
 
 /**
  * @brief Represents a color with red, green, blue, and alpha (transparency) components
@@ -69,11 +74,19 @@ struct neuron_t;
 /**
  * @brief Represents a 3D address with layer, row, and column coordinates
  */
+
+struct layer_place_n_size_t
+{
+    brain_coord_t layer_num = 0;
+    brain_coord_t rows = 0;
+    brain_coord_t cols = 0;
+};
+
 struct address_t
 {
-    layer_dim_t layer;
-    layer_dim_t row;
-    layer_dim_t col;
+    brain_coord_t layer = 0;
+    brain_coord_t row = 0;
+    brain_coord_t col = 0;
 
     bool operator<(const address_t &other) const
     {
@@ -86,9 +99,9 @@ struct address_t
     }
 
     address_t() {}
-    address_t(layer_dim_t l,
-              layer_dim_t r,
-              layer_dim_t c) : layer(l), row(r), col(c) {}
+    address_t(brain_coord_t l,
+              brain_coord_t r,
+              brain_coord_t c) : layer(l), row(r), col(c) {}
 };
 
 template <>
@@ -113,9 +126,9 @@ struct std::hash<address_t>
         size_t result = 17; // initial value
 
         // Combine hashes of layer, row, and col
-        result = result * prime + hash<layer_dim_t>{}(n.layer);
-        result = result * prime + hash<layer_dim_t>{}(n.row);
-        result = result * prime + hash<layer_dim_t>{}(n.col);
+        result = result * prime + hash<brain_coord_t>{}(n.layer);
+        result = result * prime + hash<brain_coord_t>{}(n.row);
+        result = result * prime + hash<brain_coord_t>{}(n.col);
 
         return result;
     }
@@ -156,14 +169,14 @@ namespace TNN
 struct neuron_event_t
 {
     neuron_address_t source_addr;
-    layer_dim_t src_synapse; // synapse index
+    brain_coord_t src_synapse; // synapse index
     neuron_address_t target_addr;
     clock_count_t time_of_arrival;
     TNN::ferment_t ferment;
     int signal; // Only for detector
     neuron_event_t() {}
     neuron_event_t(neuron_address_t source_addr,
-                   layer_dim_t src_synapse,
+                   brain_coord_t src_synapse,
                    neuron_address_t target_addr,
                    clock_count_t time_of_arrival,
                    TNN::ferment_t ferment,
@@ -177,11 +190,11 @@ struct neuron_event_t
 struct weight_event_t
 {
     neuron_address_t addr;
-    layer_dim_t synapse_num;
+    brain_coord_t synapse_num;
     clock_count_t spike_time;
     weight_event_t() {}
     weight_event_t(neuron_address_t addr,
-                   layer_dim_t synapse_num,
+                   brain_coord_t synapse_num,
                    clock_count_t spike_time) : addr(addr),
                                                synapse_num(synapse_num),
                                                spike_time(spike_time) {}
@@ -206,27 +219,33 @@ using tracer_buf_t = std::vector<std::pair<neuron_address_t, std::uint8_t>>;
 
 struct conn_descr_t
 {
-    layer_dim_t src_layer;
-    layer_dim_t trg_layer;
+    brain_coord_t src_layer;
+    brain_coord_t trg_layer;
     TNN::ferment_t ferment; // ferment (signed time of dissolution)
-    layer_dim_t radius;
+    brain_coord_t radius;
 };
 
 using conn_descr_coll_t = std::vector<conn_descr_t>;
 
 // max nof items in the events buffer
-constexpr layer_dim_t time_steps = 10000;
+constexpr brain_coord_t time_steps = 10000;
 
 struct net_timer_t
 {
     // std::chrono::time_point<std::chrono::high_resolution_clock> work;
     // net_timer_t() : work(std::chrono::high_resolution_clock::now()) {}
     std::atomic<clock_count_t> time_counter = 0;
+
     clock_count_t time()
     {
-        return time_counter++;
+        return time_counter.fetch_add(1);
         // return std::chrono::high_resolution_clock::now().time_since_epoch().count();
     }
+    clock_count_t time_moment()
+    {
+        return (time_counter.load() - 1);
+    }
+    net_timer_t() : time_counter(0) {}
 };
 
 class head_interface_t
@@ -255,19 +274,28 @@ struct metrics_t
     };
     std::array<std::atomic<uint64_t>, 4> results = {0, 0, 0, 0};
     std::atomic<float> accuracy = 0.0;
+    std::atomic<float> precision = 0.0;
     std::atomic<uint32_t> count = 0;
 
-    float get_accuracy(results_t res)
+    float get_metrics(results_t res)
     {
         results[res].fetch_add(1, std::memory_order_relaxed);
 
         accuracy.store(static_cast<float>(results[results_t::PT] + results[results_t::NT]) /
                        (results[results_t::PT] + results[results_t::NT] + results[results_t::PF] + results[results_t::NF]));
 
+        precision.store(static_cast<float>(results[results_t::PT]) /
+                        (results[results_t::PT] + results[results_t::PF]));
+
         auto acc_res = accuracy.load();
+        auto prc_res = precision.load();
 
         if (!(count.load() % accuracy_period))
-            std::cout << "Accuracy: " << acc_res << std::endl;
+            std::cout << "Accuracy: " << acc_res << " Precision: " << prc_res
+                      << " PT:" << results[results_t::PT]
+                      << " NT:" << results[results_t::NT]
+                      << " PF:" << results[results_t::PF]
+                      << " NF:" << results[results_t::NF] << std::endl;
         count.fetch_add(1);
 
         return acc_res;

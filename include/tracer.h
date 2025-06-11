@@ -24,7 +24,7 @@ namespace tr
     constexpr int label_len = 150;
     constexpr float decrease = 0.001;
     constexpr std::uint8_t transparent = 0xFF;
-    constexpr unsigned nof_sprites = 6;
+    constexpr unsigned nof_sprites = 8;
     constexpr unsigned scene_width = mnist_size;
     constexpr unsigned magnification = 9;
     constexpr std::uint8_t no_attenuation = 0xFF;
@@ -120,7 +120,7 @@ struct tracer_t
 
     void unlock_screen() { sfml_mutex.unlock(); }
 
-    void    display_tracer_buf(std::shared_ptr<tracer_buf_t> item)
+    void display_tracer_buf(std::shared_ptr<tracer_buf_t> item)
     {
         std::lock_guard<std::mutex> lock(sfml_mutex);
 

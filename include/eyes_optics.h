@@ -14,14 +14,14 @@ struct eyes_optics_t
 
     scene_t *pscene;
     uint64_t scene_index;
-    layer_dim_t left;
-    layer_dim_t top;
-    layer_dim_t right;
-    layer_dim_t bottom;
+    brain_coord_t left;
+    brain_coord_t top;
+    brain_coord_t right;
+    brain_coord_t bottom;
     head_interface_t *phead;
     std::mutex moving_gaze;
 
-    void zoom(int _left, int _top, layer_dim_t _width, layer_dim_t _heigth)
+    void zoom(int _left, int _top, brain_coord_t _width, brain_coord_t _heigth)
     {
         moving_gaze.lock();
         left = _left;
@@ -65,7 +65,7 @@ struct eyes_optics_t
         moving_gaze.unlock();
     }
 
-    scene_signal_t get_signal(layer_dim_t _i, layer_dim_t _j)
+    scene_signal_t get_signal(brain_coord_t _i, brain_coord_t _j)
     {
         auto i = _i + top;
         auto j = _j + left;
@@ -98,8 +98,8 @@ struct eyes_optics_t
         zoom(pdir.first * dist, pdir.second * dist, view_field_def_width, view_field_def_heigth);
     }
 
-    eyes_optics_t(layer_dim_t width = view_field_def_width,
-                  layer_dim_t heigth = view_field_def_heigth,
+    eyes_optics_t(brain_coord_t width = view_field_def_width,
+                  brain_coord_t heigth = view_field_def_heigth,
                   head_interface_t *phead = nullptr) : scene_index{0}, left{0}, top{0},
                                                        right(width - 1),
                                                        bottom(heigth - 1),

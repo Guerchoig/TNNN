@@ -445,6 +445,15 @@ void tworker_t<Derived>::put_weight_to_output_buf(weight_event_t &&ev)
                     &weight_event_t::addr>(std::move(ev));
 }
 
+/*************  ✨ Windsurf Command ⭐  *************/
+/**
+ * @brief Moves output events/weights from output buffer to the input buffers of the respective workers.
+ *
+ * @param output_buf the output buffer to move from
+ *
+ * Throws std::runtime_error if any of the workers' input buffers are full.
+ */
+/*******  47428405-c633-4d42-8a63-17d426abf8ea  *******/
 template <typename Derived>
 template <typename Tout, auto InputBuf>
 void tworker_t<Derived>::move_to_workers(Tout &output_buf)

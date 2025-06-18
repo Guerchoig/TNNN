@@ -42,8 +42,11 @@ void main_loop(phead_t phead, ptracer_t ptracer)
     sigaction(SIGINT, &sa, nullptr);
 
     phead->couching_mode.store(true);
+    // phead->couching_mode.store(false);
 
     auto first_time = true;
+    size_t epoque = 0;
+    size_t pos_in_test_set = 0;
 #ifdef TRACER_DEBUG
     while (ptracer->poll_for_closed_event())
 #else
@@ -89,6 +92,33 @@ void main_loop(phead_t phead, ptracer_t ptracer)
         std::this_thread::sleep_for(timespan);
         // phead->p_eyes_optics->saccade(1.0);
         // }
+
+        // Change couching mode
+        if (phead->couching_mode.load())
+            if (epoque == nof_images_in_learning_epoque)
+            {
+                phead->couching_mode.store(false);
+                pos_in_test_set = 0;
+            }
+            else
+            {
+                ++epoque;
+            }
+        else
+        {
+            if (pos_in_test_set == nof_images_in_test_set)
+            {
+                phead->couching_mode.store(true);
+                // phead->couching_mode.store(false);
+                epoque = 0;
+                phead->metrics.reset();
+            }
+            else
+            {
+                phead->metrics.print_metrics();
+                ++pos_in_test_set;
+            }
+        }
     }
 
     // Stop workers
@@ -119,12 +149,12 @@ int main()
 #ifndef READ_NET_FROM_FILE
         // Create network by description
         create_net(phead.get(), network_descr_t({{TNN::RETINA, mnist_size, mnist_size},
-                                                 {TNN::CORTEX, 8, 8},
+                                                 {TNN::CORTEX, 14, 14},
                                                  {TNN::CORTEX, 8, 8},
                                                  //  {TNN::CORTEX, mnist_size / 4, mnist_size / 4},
                                                  {TNN::COUCHING, 1, 10}},
 
-                                                {{0, 1, TNN::DOPHAMINE, 8 / 2},
+                                                {{0, 1, TNN::DOPHAMINE, 14 / 2},
                                                  {1, 2, TNN::DOPHAMINE, 8 / 2},
                                                  //  {2, 3, TNN::DOPHAMINE, 10 / 2}
                                                  {2, 3, TNN::DOPHAMINE, 10 / 2}}));
@@ -140,6 +170,9 @@ int main()
 #else
         main_loop(phead, nullptr);
         phead->save_model_to_file("../networks/net.out", nullptr);
+#endif
+#ifdef DEBUG
+        phead->net_timer.print_avg_tick();
 #endif
     }
     std::cout << "Done" << std::endl;

@@ -17,38 +17,76 @@
 
 using input_val_t = int;
 
-// Synapse's params-----------------------------------------------
-constexpr double spike_velocity = 1.0;
+namespace params
+{
+	// Synapse's params-----------------------------------------------
+	constexpr double spike_velocity = 1.0;
 
-// Neuron's params-----------------------------------------------
-constexpr potential_t membrana_resistance = 0.02;
-constexpr potential_t max_neuron_threshold = membrana_resistance * 30;
-constexpr potential_t neuron_threshold_alpha = 1.0E-2;
-constexpr potential_t u_rest = 0.0;
-constexpr potential_t cortex_tau = 160.0; //  ms
-constexpr potential_t cortex_leak_alpha = 1 / cortex_tau;
-constexpr potential_t scene_memory_leak_alpha = 1 / (cortex_tau * 20); // 20 times slower than cortex_tau;
+	// Visual detector's  params------------------------------------------------
+	// constexpr input_val_t visual_detector_threshold = 1;
+	constexpr potential_t detector_alpha = 0.09 / 255.0;
 
-// Retina's neuron  params------------------------------------------------
-constexpr input_val_t delta_signal_min = 1;
+	// Retina's neuron  params------------------------------------------------
+	constexpr input_val_t delta_signal_min = 1;
 
-// Visual detector's  params------------------------------------------------
-// constexpr input_val_t visual_detector_threshold = 1;
-constexpr potential_t detector_alpha = 2.0 / 255.0;
+	// Cortex's neuron params-----------------------------------------------
+	constexpr potential_t membrana_resistance = 0.030;
+	constexpr potential_t max_neuron_threshold = membrana_resistance * 25;
+	constexpr potential_t neuron_threshold_alpha = 1.0E-2;
+	constexpr potential_t u_rest = 0.0;
+	constexpr potential_t cortex_leak_tau = 30.0; //  ms
+	constexpr potential_t cortex_leak_freq = 1 / cortex_leak_tau;
+	constexpr potential_t scene_memory_leak_alpha = 1 / (cortex_leak_tau * 20); // 20 times slower than cortex_leak_tau;
 
-// Weights update  params------------------------------------------------
-constexpr potential_t max_delta_weight = 0.2; //
-constexpr potential_t weight_tau_plus = 200;  // ms
-constexpr potential_t weight_tau_minus = 200; // ms
-constexpr potential_t weight_leak_alpha_pos = 1 / weight_tau_plus;
-constexpr potential_t weight_leak_alpha_neg = 1 / weight_tau_minus;
-// constexpr clock_count_t hebb_correlation_time = 2; // tics
-
+	// Weights update  params------------------------------------------------
+	constexpr clock_count_t tau_plus = 100;	   // Time constant for pre-synaptic spike trace
+	constexpr clock_count_t tau_minus = 140;   // Time constant for post-synaptic spike trace
+	constexpr potential_t ltp_delta_max = 0.1; // LTP rate
+	constexpr potential_t ltd_delta_max = 0.1; // LTD rate
+	constexpr potential_t w_max = 2.0;		   // Maximum weight value
+	constexpr potential_t w_min = -0.2;		   // Minimum weight value
+	constexpr potential_t delta_trace = 0.1;   // Trace increase delta
+}
 constexpr clock_count_t empty_time = 0;
 constexpr brain_coord_t empty_area = -1;
 
-//
-//
+struct metrics_t
+{
+	enum results_t
+	{
+		PT = 0,
+		NT = 1,
+		PF = 2,
+		NF = 3
+	};
+	std::array<std::atomic<uint64_t>, 4> results = {0, 0, 0, 0};
+
+	void store_metric(results_t res)
+	{
+		results[res].fetch_add(1, std::memory_order_relaxed);
+	}
+
+	void print_metrics()
+	{
+		auto accuracy = static_cast<float>(results[results_t::PT] + results[results_t::NT]) /
+						(results[results_t::PT] + results[results_t::NT] + results[results_t::PF] + results[results_t::NF]);
+
+		auto precision = static_cast<float>(results[results_t::PT]) /
+						 (results[results_t::PT] + results[results_t::PF]);
+
+		std::cout << "Accuracy: " << accuracy << " Precision: " << precision
+				  << " PT:" << results[results_t::PT]
+				  << " NT:" << results[results_t::NT]
+				  << " PF:" << results[results_t::PF]
+				  << " NF:" << results[results_t::NF] << std::endl;
+	}
+	void reset()
+	{
+		for (size_t it = 0; it < results.size(); ++it)
+			results[it].store(0);
+	}
+};
+
 // Synapses-----------------------------------------------
 
 struct synapse_t
@@ -90,6 +128,7 @@ struct neuron_t
 	clock_count_t last_fired = 0LL;
 	clock_count_t last_processed = 0LL; // To calculate leaks
 	std::vector<synapse_t> synapses;
+	potential_t trace; // Spike trace for STDP
 
 	neuron_t &operator=(const neuron_t &other)
 	{
@@ -176,14 +215,24 @@ template <typename T, size_t S>
 struct input_worker_queue_t
 {
 	atomic_queue::AtomicQueue2<std::unique_ptr<T>, S> queue;
+	std::atomic<size_t> buffer_size = 0;
+
 	bool try_push(std::unique_ptr<T> &&p_pack)
 	{
+		DN(buffer_size.load());
+		buffer_size++;
+		DN(buffer_size.load());
 		return queue.try_push(std::move(p_pack));
 	}
 
 	bool try_pop(std::unique_ptr<T> &p_pack)
 	{
+		buffer_size--;
 		return queue.try_pop(p_pack);
+	}
+	input_worker_queue_t()
+	{
+		buffer_size.store(0);
 	}
 };
 
@@ -192,7 +241,7 @@ potential_t retina_leak_and_input(neuron_t &neuron, scene_signal_t signal,
 								  clock_count_t time_moment);
 potential_t cortex_leak_and_input(neuron_t &neuron, synapse_t &synapse, clock_count_t time_moment);
 
-void stdp_weight_update(neuron_t &neuron, synapse_t &synapse, clock_count_t afferent_spike_time);
+void stdp_weight_update(neuron_t &neuron, neuron_t &post_neuron, synapse_t &synapse, clock_count_t afferent_spike_time);
 
 using layers_t = std::vector<std::shared_ptr<layer_t>>;
 
@@ -238,6 +287,7 @@ struct couching_layer_t : layer_t
 	{
 		label.store(i_label);
 	}
+	unsigned int get_label() { return label.load(); }
 	couching_layer_t();
 	couching_layer_t(layer_place_n_size_t place_n_size);
 };
@@ -260,6 +310,7 @@ struct head_t : head_interface_t
 	std::atomic<bool> finish;
 	conn_descr_coll_t connections;
 	std::atomic<bool> couching_mode = false;
+	metrics_t metrics;
 
 	void make_worker_areas(worker_areas_coll_t &areas_coll, const areas_descr_coll_t &descr_areas_coll);
 
@@ -300,6 +351,9 @@ struct head_t : head_interface_t
 using phead_t = std::shared_ptr<head_t>;
 using ptracer_t = std::shared_ptr<tracer_t>;
 
+using events_input_buf_t = input_worker_queue_t<std::vector<neuron_event_t>, events_q_size>;
+using weights_input_buf_t = input_worker_queue_t<std::vector<weight_event_t>, weigths_q_size>;
+
 // workers types ------------------------------------------------
 template <typename Derived> // Curiously Recurring Template Pattern
 struct tworker_t
@@ -307,8 +361,8 @@ struct tworker_t
 	one_worker_areas_t areas;
 
 	// @brief input packs queues
-	input_worker_queue_t<std::vector<neuron_event_t>, events_q_size> input_events;
-	input_worker_queue_t<std::vector<weight_event_t>, weigths_q_size> input_weights;
+	events_input_buf_t input_events;
+	weights_input_buf_t input_weights;
 
 	std::thread worker_thread;
 
@@ -340,25 +394,27 @@ struct tworker_t
 		move_output_weights_to_workers();
 	}
 
+	template <typename T, auto BufPtr, auto AddrPtr>
+	void put_to_output_buf(T &&ev);
+
+	template <typename Tout, auto MemberPtr>
+	void move_to_workers(Tout &output_buf);
+
 	void process_cortex_weights(brain_coord_t area_num, clock_count_t time_moment);
+	template <bool JustInput>
 	void process_cortex_events([[maybe_unused]] brain_coord_t area_num,
 							   [[maybe_unused]] clock_count_t time_moment,
 							   bool couching_mode);
 	void visual_scene_proc([[maybe_unused]] brain_coord_t area_num, clock_count_t time_moment);
+	template <bool JustInput>
 	void cortex_proc([[maybe_unused]] brain_coord_t area_num, [[maybe_unused]] clock_count_t time_moment);
 	void couch_proc([[maybe_unused]] brain_coord_t area_num, [[maybe_unused]] clock_count_t time_moment);
 
 	void pass_event_to_synapses(neuron_t &firing_neuron, neuron_address_t &&addr,
 								clock_count_t time_moment);
+	clock_count_t do_empty_input_events_q();
 
-	// void put_weight_to_output_buf(neuron_address_t &src_neuron,
-	// 							   brain_coord_t synapse_num,
-	// 							   clock_count_t spike_time);
-
-	void execute()
-	{
-		static_cast<Derived *>(this)->worker();
-	}
+	void execute();
 
 	tworker_t(head_t *phead, const one_worker_areas_t &areas,
 			  ptracer_t &ptracer);
@@ -366,20 +422,19 @@ struct tworker_t
 
 struct retina_worker_t : public tworker_t<retina_worker_t> // Curiously Recurring Template Pattern
 {
-	void worker();
+	void worker(brain_coord_t area_num);
 	using tworker_t<retina_worker_t>::tworker_t;
 };
 
 struct cortex_worker_t : public tworker_t<cortex_worker_t> // Curiously Recurring Template Pattern
 {
-	void worker();
+	void worker(brain_coord_t area_num);
 	using tworker_t<cortex_worker_t>::tworker_t;
 };
 
 struct couch_worker_t : public tworker_t<couch_worker_t> // Curiously Recurring Template Pattern
 {
-	metrics_t metrics;
-	void worker();
+	void worker(brain_coord_t area_num);
 	couch_worker_t(head_t *phead,
 				   const one_worker_areas_t &areas,
 				   ptracer_t &ptracer) : tworker_t<couch_worker_t>(phead,

@@ -60,11 +60,6 @@ struct tracer_t
     sf::RenderWindow window;
     std::shared_ptr<void> phead;
 
-    // drawing queue
-    // std::queue<std::shared_ptr<tracer_buf_t>> queue;
-    // std::mutex queue_mutex;
-    // atomic_queue::AtomicQueue2<std::pair<neuron_address_t, unsigned long long int>, queue_size> queue;
-
     std::mutex sfml_mutex;
 
     void make_text_box(sf::Text &text, int len, sf::String &str)
@@ -148,6 +143,7 @@ struct tracer_t
 
         window.display();
         window.setActive(false);
+        item->clear();
     }
 
     void set_scene_index(uint64_t index) { scene_index = index; }
@@ -216,10 +212,6 @@ struct tracer_t
                         tr::left_margin + tr::label_len,
                         sf::Vector2f(tr::scene_index_width, tr::char_size));
     }
-    // ~tracer_t()
-    // {
-    //     close_window();
-    // }
 };
 
 using ptracer_t = std::shared_ptr<tracer_t>;

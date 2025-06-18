@@ -19,7 +19,7 @@
 #define TRACER_DEBUG
 // #define READ_NET_FROM_FILE
 
-// #define DEBUG
+#define DEBUG
 
 #ifdef DEBUG
 #define D(x) std::cout << x
@@ -47,10 +47,9 @@ using vector_2D_t = std::vector<std::vector<T>>;
 constexpr size_t mnist_size = 28;
 
 // learning params
-constexpr int image_show_delay = 500; // ms
-constexpr int nof_images_in_learning_epoque = 100;
-constexpr int nof_images_in_test_set = 10;
-constexpr uint32_t accuracy_period = 500;
+constexpr int image_show_delay = 200; // ms
+constexpr int nof_images_in_learning_epoque = 50;
+constexpr int nof_images_in_test_set = 5;
 constexpr uint32_t mnist_epoques = 20000;
 
 /**
@@ -235,17 +234,34 @@ struct net_timer_t
     // std::chrono::time_point<std::chrono::high_resolution_clock> work;
     // net_timer_t() : work(std::chrono::high_resolution_clock::now()) {}
     std::atomic<clock_count_t> time_counter = 0;
+    std::atomic<clock_count_t> prev_moment = 0;
+    std::atomic<float> avg_tick = 0.0;
 
     clock_count_t time()
     {
-        return time_counter.fetch_add(1);
-        // return std::chrono::high_resolution_clock::now().time_since_epoch().count();
+        auto t = time_counter.fetch_add(1);
+#ifdef DEBUG
+        auto cur_time = clock();
+        if (t > 1)
+        {
+            auto dt = cur_time - prev_moment;
+            avg_tick = (avg_tick * (t - 2) + dt) / (t - 1);
+        }
+        prev_moment = cur_time;
+#endif
+        return t;
     }
     clock_count_t time_moment()
     {
         return (time_counter.load() - 1);
     }
     net_timer_t() : time_counter(0) {}
+#ifdef DEBUG
+    void print_avg_tick()
+    {
+        std::cout << "Average tick: " << avg_tick << std::endl;
+    }
+#endif
 };
 
 class head_interface_t
@@ -262,42 +278,3 @@ public:
 
 // void print_couch();
 inline unsigned nof_event_threads = 0;
-
-struct metrics_t
-{
-    enum results_t
-    {
-        PT = 0,
-        NT = 1,
-        PF = 2,
-        NF = 3
-    };
-    std::array<std::atomic<uint64_t>, 4> results = {0, 0, 0, 0};
-    std::atomic<float> accuracy = 0.0;
-    std::atomic<float> precision = 0.0;
-    std::atomic<uint32_t> count = 0;
-
-    float get_metrics(results_t res)
-    {
-        results[res].fetch_add(1, std::memory_order_relaxed);
-
-        accuracy.store(static_cast<float>(results[results_t::PT] + results[results_t::NT]) /
-                       (results[results_t::PT] + results[results_t::NT] + results[results_t::PF] + results[results_t::NF]));
-
-        precision.store(static_cast<float>(results[results_t::PT]) /
-                        (results[results_t::PT] + results[results_t::PF]));
-
-        auto acc_res = accuracy.load();
-        auto prc_res = precision.load();
-
-        if (!(count.load() % accuracy_period))
-            std::cout << "Accuracy: " << acc_res << " Precision: " << prc_res
-                      << " PT:" << results[results_t::PT]
-                      << " NT:" << results[results_t::NT]
-                      << " PF:" << results[results_t::PF]
-                      << " NF:" << results[results_t::NF] << std::endl;
-        count.fetch_add(1);
-
-        return acc_res;
-    }
-};

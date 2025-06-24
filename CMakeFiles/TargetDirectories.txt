@@ -1,0 +1,9 @@
+/home/sasha/source/tnnn/CMakeFiles/test.dir
+/home/sasha/source/tnnn/CMakeFiles/TNN.dir
+/home/sasha/source/tnnn/CMakeFiles/edit_cache.dir
+/home/sasha/source/tnnn/CMakeFiles/rebuild_cache.dir
+/home/sasha/source/tnnn/atomic_queue/CMakeFiles/edit_cache.dir
+/home/sasha/source/tnnn/atomic_queue/CMakeFiles/rebuild_cache.dir
+/home/sasha/source/tnnn/atomic_queue/include/CMakeFiles/atomic_queue.dir
+/home/sasha/source/tnnn/atomic_queue/include/CMakeFiles/edit_cache.dir
+/home/sasha/source/tnnn/atomic_queue/include/CMakeFiles/rebuild_cache.dir

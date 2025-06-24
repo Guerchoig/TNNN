@@ -24,30 +24,30 @@ namespace params
 
 	// Visual detector's  params------------------------------------------------
 	// constexpr input_val_t visual_detector_threshold = 1;
-	constexpr potential_t detector_alpha = 0.09 / 255.0;
+	constexpr potential_t detector_alpha = 3.0 / 255.0;
 
 	// Retina's neuron  params------------------------------------------------
 	constexpr input_val_t delta_signal_min = 1;
 
 	// Cortex's neuron params-----------------------------------------------
-	constexpr potential_t membrana_resistance = 0.030;
-	constexpr potential_t max_neuron_threshold = membrana_resistance * 25;
+	constexpr potential_t membrana_resistance = 0.060;
+	constexpr potential_t max_neuron_threshold = membrana_resistance * 40;
 	constexpr potential_t neuron_threshold_alpha = 1.0E-2;
 	constexpr potential_t u_rest = 0.0;
-	constexpr potential_t cortex_leak_tau = 30.0; //  ms
+	constexpr potential_t cortex_leak_tau = 200.0; //  tics
 	constexpr potential_t cortex_leak_freq = 1 / cortex_leak_tau;
 	constexpr potential_t scene_memory_leak_alpha = 1 / (cortex_leak_tau * 20); // 20 times slower than cortex_leak_tau;
 
 	// Weights update  params------------------------------------------------
-	constexpr clock_count_t tau_plus = 100;	   // Time constant for pre-synaptic spike trace
-	constexpr clock_count_t tau_minus = 140;   // Time constant for post-synaptic spike trace
-	constexpr potential_t ltp_delta_max = 0.1; // LTP rate
+	constexpr clock_count_t tau_plus = 200;	   // Time constant for pre-synaptic spike trace
+	constexpr clock_count_t tau_minus = 15;	   // Time constant for post-synaptic spike trace
+	constexpr potential_t ltp_delta_max = 0.2; // LTP rate
 	constexpr potential_t ltd_delta_max = 0.1; // LTD rate
 	constexpr potential_t w_max = 2.0;		   // Maximum weight value
-	constexpr potential_t w_min = -0.2;		   // Minimum weight value
-	constexpr potential_t delta_trace = 0.1;   // Trace increase delta
+	constexpr potential_t w_min = 0.0;		   // Minimum weight value
+	constexpr potential_t delta_trace = 0.2;   // Trace increase delta
 }
-constexpr clock_count_t empty_time = 0;
+constexpr clock_count_t empty_time = std::numeric_limits<clock_count_t>::max();
 constexpr brain_coord_t empty_area = -1;
 
 struct metrics_t
@@ -68,17 +68,23 @@ struct metrics_t
 
 	void print_metrics()
 	{
-		auto accuracy = static_cast<float>(results[results_t::PT] + results[results_t::NT]) /
-						(results[results_t::PT] + results[results_t::NT] + results[results_t::PF] + results[results_t::NF]);
+		auto positive_total = results[results_t::PT] + results[results_t::PF];
+		auto total = positive_total + results[results_t::NT] + results[results_t::NF];
 
-		auto precision = static_cast<float>(results[results_t::PT]) /
-						 (results[results_t::PT] + results[results_t::PF]);
+		auto accuracy = 0.0f;
+		auto precision = 0.0f;
+		if (total)
+			accuracy = static_cast<float>(results[results_t::PT] + results[results_t::NT]) / total;
+		if (positive_total)
+			precision = static_cast<float>(results[results_t::PT]) / positive_total;
 
 		std::cout << "Accuracy: " << accuracy << " Precision: " << precision
 				  << " PT:" << results[results_t::PT]
 				  << " NT:" << results[results_t::NT]
 				  << " PF:" << results[results_t::PF]
-				  << " NF:" << results[results_t::NF] << std::endl;
+				  << " NF:" << results[results_t::NF]
+				  << " Total:" << total
+				  << std::endl;
 	}
 	void reset()
 	{
@@ -215,20 +221,29 @@ template <typename T, size_t S>
 struct input_worker_queue_t
 {
 	atomic_queue::AtomicQueue2<std::unique_ptr<T>, S> queue;
-	std::atomic<size_t> buffer_size = 0;
+	std::atomic<size_t> buffer_size;
 
 	bool try_push(std::unique_ptr<T> &&p_pack)
 	{
-		DN(buffer_size.load());
-		buffer_size++;
-		DN(buffer_size.load());
-		return queue.try_push(std::move(p_pack));
+
+		auto res = queue.try_push(std::move(p_pack));
+		// if (res)
+		// {
+		// 	buffer_size++;
+		// 	}
+		return res;
 	}
 
 	bool try_pop(std::unique_ptr<T> &p_pack)
 	{
-		buffer_size--;
-		return queue.try_pop(p_pack);
+		auto res = queue.try_pop(p_pack);
+		// if (res)
+		// {
+		// 	buffer_size--;
+		// 	D("--");
+		// 	DN(buffer_size.load());
+		// }
+		return res;
 	}
 	input_worker_queue_t()
 	{
@@ -342,6 +357,8 @@ struct head_t : head_interface_t
 		return _layer.neuron_ref(addr.row, addr.col);
 	}
 
+	void print_worker_counters();
+	
 	void save_model_to_file(std::string file_name, [[maybe_unused]] std::shared_ptr<tracer_t> ptracer);
 	void read_model_from_file(std::string file_name, [[maybe_unused]] std::shared_ptr<tracer_t> ptracer);
 
@@ -371,48 +388,26 @@ struct tworker_t
 
 	head_t *phead;
 	ptracer_t ptracer;
-
-	void clear_output_buffers()
-	{
-		for (auto it = output_events_buf.begin(); it != output_events_buf.end(); ++it)
-			it->second->clear();
-		for (auto it = output_weights_buf.begin(); it != output_weights_buf.end(); ++it)
-			it->second->clear();
-	}
-
-	void put_event_to_output_buf(neuron_event_t &&ev);
-	void put_weight_to_output_buf(weight_event_t &&ev);
-
-	// template <typename OutputBufType>
-	// void move_output_packs_to_workers(OutputBufType &output_buf);
-	void move_output_events_to_workers();
-	void move_output_weights_to_workers();
-
-	void move_signals_n_weights_packs_to_workers()
-	{
-		move_output_events_to_workers();
-		move_output_weights_to_workers();
-	}
-
-	template <typename T, auto BufPtr, auto AddrPtr>
-	void put_to_output_buf(T &&ev);
+	counter_t events_counter;
+	counter_t weight_events_counter;
 
 	template <typename Tout, auto MemberPtr>
 	void move_to_workers(Tout &output_buf);
 
-	void process_cortex_weights(brain_coord_t area_num, clock_count_t time_moment);
+	template <typename T, auto BufPtr, auto AddrPtr>
+	void put_to_output_buf(T &&ev);
+
+	void cortex_process_weights(brain_coord_t area_num, clock_count_t time_moment);
 	template <bool JustInput>
-	void process_cortex_events([[maybe_unused]] brain_coord_t area_num,
+	void cortex_process_events([[maybe_unused]] brain_coord_t area_num,
 							   [[maybe_unused]] clock_count_t time_moment,
 							   bool couching_mode);
 	void visual_scene_proc([[maybe_unused]] brain_coord_t area_num, clock_count_t time_moment);
 	template <bool JustInput>
-	void cortex_proc([[maybe_unused]] brain_coord_t area_num, [[maybe_unused]] clock_count_t time_moment);
-	void couch_proc([[maybe_unused]] brain_coord_t area_num, [[maybe_unused]] clock_count_t time_moment);
-
+	void cortex_proccess_input([[maybe_unused]] brain_coord_t area_num, [[maybe_unused]] clock_count_t time_moment = empty_time);
 	void pass_event_to_synapses(neuron_t &firing_neuron, neuron_address_t &&addr,
 								clock_count_t time_moment);
-	clock_count_t do_empty_input_events_q();
+	clock_count_t empty_input_buf_get_time();
 
 	void execute();
 

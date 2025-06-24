@@ -16,10 +16,11 @@
 #include <atomic>
 
 // Mode of operation parameters
-#define TRACER_DEBUG
+// ----------------------------------------------
+// #define TRACER_DEBUG
 // #define READ_NET_FROM_FILE
-
-#define DEBUG
+// #define DEBUG
+// -----
 
 #ifdef DEBUG
 #define D(x) std::cout << x
@@ -49,7 +50,7 @@ constexpr size_t mnist_size = 28;
 // learning params
 constexpr int image_show_delay = 200; // ms
 constexpr int nof_images_in_learning_epoque = 50;
-constexpr int nof_images_in_test_set = 5;
+constexpr int nof_images_in_test_set = 10;
 constexpr uint32_t mnist_epoques = 20000;
 
 /**
@@ -170,19 +171,19 @@ struct neuron_event_t
     neuron_address_t source_addr;
     brain_coord_t src_synapse; // synapse index
     neuron_address_t target_addr;
-    clock_count_t time_of_arrival;
+    clock_count_t presynaptic_spike_time;
     TNN::ferment_t ferment;
     int signal; // Only for detector
     neuron_event_t() {}
     neuron_event_t(neuron_address_t source_addr,
                    brain_coord_t src_synapse,
                    neuron_address_t target_addr,
-                   clock_count_t time_of_arrival,
+                   clock_count_t presynaptic_spike_time,
                    TNN::ferment_t ferment,
                    int signal) : source_addr(source_addr),
                                  src_synapse(src_synapse),
                                  target_addr(target_addr),
-                                 time_of_arrival(time_of_arrival),
+                                 presynaptic_spike_time(presynaptic_spike_time),
                                  ferment(ferment), signal(signal) {}
 };
 
@@ -190,13 +191,13 @@ struct weight_event_t
 {
     neuron_address_t addr;
     brain_coord_t synapse_num;
-    clock_count_t spike_time;
+    clock_count_t postsynaptic_spike_time;
     weight_event_t() {}
     weight_event_t(neuron_address_t addr,
                    brain_coord_t synapse_num,
-                   clock_count_t spike_time) : addr(addr),
-                                               synapse_num(synapse_num),
-                                               spike_time(spike_time) {}
+                   clock_count_t postsynaptic_spike_time) : addr(addr),
+                                                            synapse_num(synapse_num),
+                                                            postsynaptic_spike_time(postsynaptic_spike_time) {}
 };
 
 // Workers's types and params -----------------------------------------------
@@ -276,5 +277,15 @@ public:
     virtual void display_tracer_buf(std::shared_ptr<tracer_buf_t> item) = 0;
 };
 
+struct counter_t
+{
+    std::atomic<uint64_t> counter = 0;
+    void inc() { counter.fetch_add(1, std::memory_order_relaxed); }
+    void inc_by(uint64_t value) { counter.fetch_add(value, std::memory_order_relaxed); }
+    void zero() { counter.store(0, std::memory_order_relaxed); }
+    void print(std::string name) { std::cout << name << ": " << counter.load() << std::endl; }
+};
+
 // void print_couch();
 inline unsigned nof_event_threads = 0;
+

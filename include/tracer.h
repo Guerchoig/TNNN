@@ -29,6 +29,7 @@ namespace tr
     constexpr unsigned magnification = 9;
     constexpr std::uint8_t no_attenuation = 0xFF;
     constexpr int scene_index_width = 300;
+    constexpr clock_count_t period = 5;
 }
 enum dubbs_t
 {

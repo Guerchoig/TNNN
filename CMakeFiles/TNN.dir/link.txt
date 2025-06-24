@@ -1,0 +1,2 @@
+/usr/bin/ar qc libTNN.a CMakeFiles/TNN.dir/src/brain.cpp.o CMakeFiles/TNN.dir/src/input_output.cpp.o CMakeFiles/TNN.dir/src/mnist_set.cpp.o
+/usr/bin/ranlib libTNN.a

@@ -47,6 +47,7 @@ void main_loop(phead_t phead, ptracer_t ptracer)
     auto first_time = true;
     size_t epoque = 0;
     size_t pos_in_test_set = 0;
+    // int times = 1;
 #ifdef TRACER_DEBUG
     while (ptracer->poll_for_closed_event())
 #else
@@ -59,7 +60,8 @@ void main_loop(phead_t phead, ptracer_t ptracer)
 
         if (p.first == nullptr)
             break; // No more images
-
+        // if (!times--)
+        //     break;
         // Set appropriate scene
         phead->p_eyes_optics->set_scene(p.first);
 #ifdef TRACER_DEBUG
@@ -174,6 +176,7 @@ int main()
 #ifdef DEBUG
         phead->net_timer.print_avg_tick();
 #endif
+        phead->print_worker_counters();
     }
     std::cout << "Done" << std::endl;
     return 0;

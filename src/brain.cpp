@@ -15,24 +15,49 @@
 using namespace TNN;
 using namespace params;
 
+double retardation(uint64_t times)
+{
+  double res = 1;
+  while (times--)
+    res = exp(-times);
+  return res;
+}
+
 // Layer constructor's common ------------------------------------------
 template <Is_layer T>
 void create_neurons(T *layer, layer_place_n_size_t place_n_size)
 {
+  if (!layer)
+  {
+    throw std::invalid_argument("Layer pointer is null.");
+  }
+
   std::random_device rd;
   std::mt19937 gen(rd());
   std::uniform_real_distribution<> u(0, 1);
+
   auto &neurons = layer->neurons;
+  neurons.clear(); // Clear existing neurons to ensure fresh initialization
   neurons.reserve(place_n_size.rows);
+
   for (brain_coord_t i = 0; i < place_n_size.rows; ++i)
   {
     neurons.emplace_back();
     neurons.back().reserve(place_n_size.cols);
+
     for (brain_coord_t j = 0; j < place_n_size.cols; ++j)
     {
       auto uu = u(gen);
 
-      neurons.back().emplace_back(uu, max_neuron_threshold, 0L);
+      try
+      {
+        neurons.back().emplace_back(uu, max_neuron_threshold, 0L);
+      }
+      catch (const std::exception &e)
+      {
+        std::cerr << "Failed to create neuron: " << e.what() << std::endl;
+        throw;
+      }
     }
   }
 }
@@ -103,7 +128,8 @@ void tworker_t<Derived>::execute()
     {
       static_cast<Derived *>(this)->worker(area_num);
 
-      move_signals_n_weights_packs_to_workers();
+      move_to_workers<events_output_buf_t, &tworker_t<Derived>::input_events>(output_events_buf);
+      move_to_workers<weights_output_buf_t, &tworker_t<Derived>::input_weights>(output_weights_buf);
     }
   }
   phead->active_workers--;
@@ -115,40 +141,37 @@ void retina_worker_t::worker(brain_coord_t area_num)
 {
   auto retina_time = phead->net_timer.time();
   visual_scene_proc(area_num, retina_time);
-  cortex_proc<true>(area_num, retina_time);
+  cortex_proccess_input<true>(area_num, retina_time);
 }
 
 void cortex_worker_t::worker(brain_coord_t area_num)
 {
-  auto time_moment = phead->net_timer.time_moment();
-  cortex_proc<false>(area_num, time_moment);
+  cortex_proccess_input<false>(area_num); // time_moment = empty_time
 }
 
 void couch_worker_t::worker(brain_coord_t area_num)
 {
-  auto time_moment = phead->net_timer.time_moment();
-  couch_proc(area_num, time_moment);
+  cortex_proccess_input<false>(area_num); // time_moment = empty_time
 }
 
 // tworker_t process methods ----------------------------------------------------
 
-void update_threshold(neuron_t &neuron, clock_count_t time_of_arrival)
+void update_threshold(neuron_t &neuron, clock_count_t presynaptic_spike_time)
 {
-  auto delta_time = time_of_arrival - neuron.last_fired;
+  auto delta_time = presynaptic_spike_time - neuron.last_fired;
   if (delta_time <= 0)
     return;
   neuron.threshold = max_neuron_threshold * exp(-neuron_threshold_alpha * (delta_time));
 }
 
 template <typename Derived>
-void tworker_t<Derived>::process_cortex_weights([[maybe_unused]] brain_coord_t area_num, [[maybe_unused]] clock_count_t time_moment)
+void tworker_t<Derived>::cortex_process_weights([[maybe_unused]] brain_coord_t area_num,
+                                                [[maybe_unused]] clock_count_t time_moment)
 {
   std::unique_ptr<std::vector<weight_event_t>> p_wpack;
 
   while (input_weights.try_pop(p_wpack))
   {
-    if (p_wpack.get() == nullptr)
-      break;
     // Proccess input weights pack
     for (auto &we : *p_wpack)
     {
@@ -156,7 +179,7 @@ void tworker_t<Derived>::process_cortex_weights([[maybe_unused]] brain_coord_t a
       auto &synapse = neuron.synapses.at(we.synapse_num);
       auto &post_neuron = phead->neuron_ref(synapse.target_addr);
       // auto source_type = phead->layers[areas[area_num].layer]->ltype;
-      stdp_weight_update(neuron, post_neuron, synapse, we.spike_time);
+      stdp_weight_update(neuron, post_neuron, synapse, we.postsynaptic_spike_time);
     }
   }
 }
@@ -169,11 +192,11 @@ potential_t cortex_signal(const synapse_t &synapse)
 
 template <typename Derived>
 template <bool JustInput>
-void tworker_t<Derived>::process_cortex_events([[maybe_unused]] brain_coord_t area_num,
+void tworker_t<Derived>::cortex_process_events([[maybe_unused]] brain_coord_t area_num,
                                                [[maybe_unused]] clock_count_t time_moment,
                                                bool couching_mode)
 {
-  // Process events
+
   std::unique_ptr<std::vector<neuron_event_t>> p_epack;
   auto tracer_buf = std::make_shared<tracer_buf_t>();
 
@@ -188,136 +211,119 @@ void tworker_t<Derived>::process_cortex_events([[maybe_unused]] brain_coord_t ar
       auto &src = phead->neuron_ref(e.source_addr);
       auto &synapse = src.synapses[e.src_synapse];
 
-      // Store metrics
+      // Store metrics lambda -------------------------------------------------
       auto store_metric = [this, e, couching_mode](bool fired)
       {
         metrics_t::results_t res;
-        if constexpr (std::is_same_v<Derived, couch_worker_t>)
-          if (!couching_mode)
-          {
-            auto label = phead->get_label();
-            if (fired)
-              if (e.target_addr.col == label)
-                res = metrics_t::results_t::PT;
-              else
-                res = metrics_t::results_t::PF;
-            else if (e.target_addr.col == label)
-              res = metrics_t::results_t::NF;
+        if (!couching_mode)
+        {
+          auto label = phead->get_label();
+          if (fired)
+            if (e.target_addr.col == label)
+              res = metrics_t::results_t::PT;
             else
-              res = metrics_t::results_t::NT;
-            phead->metrics.store_metric(res);
-          }
+              res = metrics_t::results_t::PF;
+          else if (e.target_addr.col == label)
+            res = metrics_t::results_t::NF;
+          else
+            res = metrics_t::results_t::NT;
+          phead->metrics.store_metric(res);
+        }
       };
+      // ---------------------------------------------------------------------
 
       // Calculate u
       potential_t u = 0.0;
       potential_t u_res = 0.0;
 
       if constexpr (JustInput)
-
         u = trg.u_mem + cortex_signal(synapse);
       else
-        u = cortex_leak_and_input(trg, synapse, e.time_of_arrival);
+        u = cortex_leak_and_input(trg, synapse, e.presynaptic_spike_time);
 
       // Fire ==============================================================
+      clock_count_t update_time = 0;
       if (u < trg.threshold)
       {
         u_res = u;
-        store_metric(false);
+        update_time = trg.last_fired;
+        if constexpr (std::is_same_v<Derived, couch_worker_t>)
+          store_metric(false);
       }
       else
       {
-        trg.last_fired = e.time_of_arrival;
+        trg.last_fired = e.presynaptic_spike_time;
         trg.trace += delta_trace;
-        pass_event_to_synapses(trg, std::move(e.target_addr), e.time_of_arrival);
+        update_time = e.presynaptic_spike_time;
+        if constexpr (!std::is_same_v<Derived, couch_worker_t>)
+          pass_event_to_synapses(trg, std::move(e.target_addr), update_time);
 #ifdef TRACER_DEBUG
         // Add to tracer buffer
-        tracer_buf->push_back(std::make_pair<neuron_address_t, brain_coord_t>({static_cast<brain_coord_t>(e.target_addr.layer + 2),
-                                                                               e.target_addr.row,
-                                                                               e.target_addr.col},
-                                                                              std::numeric_limits<std::uint8_t>::max()));
+        if (update_time % tr::period == 0)
+          tracer_buf->push_back(std::make_pair<neuron_address_t,
+                                               brain_coord_t>({static_cast<brain_coord_t>(e.target_addr.layer + 2),
+                                                               e.target_addr.row,
+                                                               e.target_addr.col},
+                                                              std::numeric_limits<std::uint8_t>::max()));
 #endif
-
-        if (couching_mode)
-        {
-          if constexpr (!std::is_same_v<Derived, couch_worker_t>)
-          {
-            // Put weight to output buffer
-            auto ew = weight_event_t{
-                e.source_addr,
-                e.src_synapse,
-                e.time_of_arrival};
-            put_weight_to_output_buf(std::move(ew));
-          }
-        }
-
         u_res = u_rest;
-        store_metric(true);
+        if constexpr (std::is_same_v<Derived, couch_worker_t>)
+          store_metric(true);
       }
       trg.u_mem = u_res;
+      if (couching_mode)
+      {
+        if constexpr (std::is_same_v<Derived, couch_worker_t>)
+        {
+          auto label = phead->get_label();
+          if (e.target_addr.col == label)
+            update_time = e.presynaptic_spike_time;
+          else
+            update_time = trg.last_fired;
+        }
+        // Put weight to output buffer
+        auto ew = weight_event_t{
+            e.source_addr,
+            e.src_synapse,
+            update_time};
+
+        put_to_output_buf<weight_event_t,
+                          &tworker_t<Derived>::output_weights_buf,
+                          &weight_event_t::addr>(std::move(ew));
+      }
     }
-#ifdef TRACER_DEBUG
-    // Trace show layers
-    ptracer->display_tracer_buf(tracer_buf);
-#endif
   }
+#ifdef TRACER_DEBUG
+  // Trace show layers
+  ptracer->display_tracer_buf(tracer_buf);
+#endif
 }
 
 template <typename Derived>
 template <bool JustInput>
-void tworker_t<Derived>::cortex_proc([[maybe_unused]] brain_coord_t area_num, [[maybe_unused]] clock_count_t time_moment)
+void tworker_t<Derived>::cortex_proccess_input([[maybe_unused]] brain_coord_t area_num,
+                                               [[maybe_unused]] clock_count_t time_moment)
 {
 
   auto couching_mode = phead->couching_mode.load();
 
   // In couching mode
   if (couching_mode)
-    process_cortex_weights(area_num, time_moment);
+    cortex_process_weights(area_num, time_moment);
 
-  process_cortex_events<JustInput>(area_num, time_moment, couching_mode);
+  cortex_process_events<JustInput>(area_num, time_moment, couching_mode);
 }
 
 template <typename Derived>
-clock_count_t tworker_t<Derived>::do_empty_input_events_q()
+clock_count_t tworker_t<Derived>::empty_input_buf_get_time()
 {
-  constexpr auto max_time = std::numeric_limits<clock_count_t>::max();
-  clock_count_t time_moment = max_time;
+  clock_count_t time_moment = empty_time;
   std::unique_ptr<std::vector<neuron_event_t>> p_epack;
   while (input_events.try_pop(p_epack))
-    if (time_moment == max_time)
-      time_moment = p_epack->at(0).time_of_arrival;
+    if (time_moment == empty_time)
+      time_moment = p_epack->at(0).presynaptic_spike_time;
 
   return time_moment;
-}
-
-template <typename Derived>
-void tworker_t<Derived>::couch_proc([[maybe_unused]] brain_coord_t area_num, [[maybe_unused]] clock_count_t time_moment)
-{
-  constexpr auto max_time = std::numeric_limits<clock_count_t>::max();
-  auto area = areas[area_num];
-  auto _label = phead->get_label();
-  address_t addr(area.layer, 0, _label);
-  auto &trg = phead->neuron_ref(addr);
-  auto couching_mode = phead->couching_mode.load();
-
-  if (couching_mode)
-  {
-    auto time_moment = do_empty_input_events_q();
-    if (time_moment == max_time)
-      return; // input buffer was empty before processing
-    for (size_t i = 0; i < trg.synapses.size(); ++i)
-    {
-      auto ew = weight_event_t(
-          trg.synapses[i].target_addr,
-          static_cast<brain_coord_t>(trg.synapses[i].weight),
-          time_moment);
-      put_weight_to_output_buf(std::move(ew));
-    }
-  }
-  else
-  {
-    process_cortex_events<false>(area_num, time_moment, couching_mode);
-  }
 }
 
 template <typename Derived>
@@ -355,14 +361,18 @@ void tworker_t<Derived>::visual_scene_proc([[maybe_unused]] brain_coord_t area_n
       //   mem_point.first *= exp(-scene_memory_leak_alpha * (time_moment - mem_point.second));
 
       auto u = retina_leak_and_input(neuron, scene_val, mem_point, time_moment);
+      retardation(20000);
 
 #ifdef TRACER_DEBUG
       // Trace scenes
-      tracer_buf->push_back(std::make_pair<neuron_address_t, brain_coord_t>({static_cast<brain_coord_t>(layer_num), i, j},
-                                                                            scene_val));
+      if (time_moment % tr::period == 0)
+      {
+        tracer_buf->push_back(std::make_pair<neuron_address_t, brain_coord_t>({static_cast<brain_coord_t>(layer_num), i, j},
+                                                                              scene_val));
 
-      tracer_buf->push_back(std::make_pair<neuron_address_t, brain_coord_t>({static_cast<brain_coord_t>(layer_num + 1), i, j},
-                                                                            mem_point.first));
+        tracer_buf->push_back(std::make_pair<neuron_address_t, brain_coord_t>({static_cast<brain_coord_t>(layer_num + 1), i, j},
+                                                                              mem_point.first));
+      }
 #endif
       // Firing
       if (u >= neuron.threshold)
@@ -374,8 +384,9 @@ void tworker_t<Derived>::visual_scene_proc([[maybe_unused]] brain_coord_t area_n
                                time_moment);
         u = u_rest;
 #ifdef TRACER_DEBUG
-        tracer_buf->push_back(std::make_pair<neuron_address_t, brain_coord_t>({static_cast<brain_coord_t>(layer_num + 2), i, j},
-                                                                              std::numeric_limits<std::uint8_t>::max()));
+        if (!time_moment % tr::period == 0)
+          tracer_buf->push_back(std::make_pair<neuron_address_t, brain_coord_t>({static_cast<brain_coord_t>(layer_num + 2), i, j},
+                                                                                std::numeric_limits<std::uint8_t>::max()));
 #endif
       }
       neuron.u_mem = u;
@@ -388,8 +399,6 @@ void tworker_t<Derived>::visual_scene_proc([[maybe_unused]] brain_coord_t area_n
   ptracer->display_tracer_buf(tracer_buf);
 #endif
 }
-
-constexpr potential_t couch_u_label = 1000.0;
 
 // tworker_t output methods ----------------------------------------------------
 
@@ -412,7 +421,10 @@ void tworker_t<Derived>::pass_event_to_synapses(neuron_t &firing_neuron, neuron_
         afferr_synapse->ferment,
         0};
 
-    put_event_to_output_buf(std::move(ev));
+    // Put event to the output buffer
+    put_to_output_buf<neuron_event_t,
+                      &tworker_t<Derived>::output_events_buf,
+                      &neuron_event_t::target_addr>(std::move(ev));
   }
 }
 
@@ -422,38 +434,19 @@ void tworker_t<Derived>::put_to_output_buf(T &&ev)
 {
   auto area_address = phead->area_address(ev.*AddrPtr);
   auto &buf = (*this).*BufPtr;
-  if (auto it = buf.find(area_address); it == buf.end() || it->second == nullptr)
-    buf[area_address] = std::make_unique<std::vector<T>>();
-  else if (buf[area_address].get() == nullptr)
+  auto it = buf.find(area_address);
+  if (it == buf.end())
     buf[area_address] = std::make_unique<std::vector<T>>();
   buf[area_address]->push_back(std::move(ev));
 }
 
-template <typename Derived>
-void tworker_t<Derived>::put_event_to_output_buf(neuron_event_t &&ev)
-{
-  put_to_output_buf<neuron_event_t,
-                    &tworker_t<Derived>::output_events_buf,
-                    &neuron_event_t::target_addr>(std::move(ev));
-}
-
-template <typename Derived>
-void tworker_t<Derived>::put_weight_to_output_buf(weight_event_t &&ev)
-{
-  put_to_output_buf<weight_event_t,
-                    &tworker_t<Derived>::output_weights_buf,
-                    &weight_event_t::addr>(std::move(ev));
-}
-
-/*************  ✨ Windsurf Command ⭐  *************/
 /**
  * @brief Moves output events/weights from output buffer to the input buffers of the respective workers.
  *
  * @param output_buf the output buffer to move from
  *
- * Throws std::runtime_error if any of the workers' input buffers are full.
+ * Throws std::runtime_error if any of the workers' input buffers are full, or if a null pointer is encountered.
  */
-/*******  47428405-c633-4d42-8a63-17d426abf8ea  *******/
 template <typename Derived>
 template <typename Tout, auto InputBuf>
 void tworker_t<Derived>::move_to_workers(Tout &output_buf)
@@ -461,32 +454,39 @@ void tworker_t<Derived>::move_to_workers(Tout &output_buf)
   for (auto it = output_buf.begin(); it != output_buf.end(); ++it)
   {
     auto p = std::static_pointer_cast<tworker_t<Derived>>(phead->workers[it->first]);
-    if (it->second.get() != nullptr)
+    if (p == nullptr)
+      throw std::runtime_error(__PRETTY_FUNCTION__ + std::string(": null pointer to worker"));
+
+    if (it->second.get())
     {
+#ifdef DEBUG
+      if (it->first.layer == 2)
+      {
+        D("Buf to layer 2 size: ");
+        DN(it->second->size());
+      }
+#endif
+      // Increment counters
+      if constexpr (std::is_same_v<Tout, events_output_buf_t>)
+        events_counter.inc_by(it->second->size());
+      else
+        weight_events_counter.inc_by(it->second->size());
+
+      // Push events
       if (!((*p).*InputBuf).try_push(std::move(it->second)))
-        throw std::runtime_error(__PRETTY_FUNCTION__);
+        throw std::runtime_error(__PRETTY_FUNCTION__ + std::string(": worker input buffer full"));
     }
   }
   output_buf.clear();
-}
-
-template <typename Derived>
-void tworker_t<Derived>::move_output_events_to_workers()
-{
-  move_to_workers<events_output_buf_t, &tworker_t<Derived>::input_events>(output_events_buf);
-}
-template <typename Derived>
-void tworker_t<Derived>::move_output_weights_to_workers()
-{
-  move_to_workers<weights_output_buf_t, &tworker_t<Derived>::input_weights>(output_weights_buf);
 }
 
 // Potentials & Weights updater functions------------------------------------------
 
 potential_t cortex_leaked_u(neuron_t &neuron, clock_count_t time_moment)
 {
+
   auto delta_time = time_moment - neuron.last_processed;
-  if (delta_time <= 0) // Leakage is accounted only once
+  if (delta_time <= 0)
     return neuron.u_mem;
 
   // Approx exponent decay
@@ -529,21 +529,20 @@ potential_t retina_leak_and_input([[maybe_unused]] neuron_t &neuron,
 
 void stdp_weight_update(neuron_t &neuron, neuron_t &post_neuron, synapse_t &synapse, clock_count_t afferent_spike_time)
 {
-
   auto delta_time = afferent_spike_time - neuron.last_fired; // delta_time
   // Decay the spike traces
   if (delta_time != 0)
   {
-    neuron.trace *= exp(-delta_time / tau_plus);
-    post_neuron.trace *= exp(-delta_time / tau_minus);
+    neuron.trace *= std::exp(-delta_time / tau_plus);
+    post_neuron.trace *= std::exp(-delta_time / tau_minus);
   }
 
   // Check for pre-synaptic spike (LTP)
   potential_t dw;
-  if (delta_time == 0)
-    dw = ltp_delta_max * post_neuron.trace - ltd_delta_max * neuron.trace;
+  // if (delta_time == 0)
+  //   dw = ltp_delta_max * post_neuron.trace - ltd_delta_max * neuron.trace;
   // If post neuron spiked recently (pre before post case)
-  else if (delta_time > 0)
+  if (delta_time >= 0)
     dw = ltp_delta_max * post_neuron.trace;
   else if (delta_time < 0) // Check for post-synaptic spike (LTD)
     dw = -ltd_delta_max * neuron.trace;
@@ -558,11 +557,20 @@ void stdp_weight_update(neuron_t &neuron, neuron_t &post_neuron, synapse_t &syna
 
 void head_t::make_worker_areas(worker_areas_coll_t &areas_coll, const areas_descr_coll_t &descr_areas_coll)
 {
+  if (descr_areas_coll.empty())
+    throw std::runtime_error(__PRETTY_FUNCTION__ + std::string(": empty areas description"));
+
   for (auto descr_areas = descr_areas_coll.begin(); descr_areas != descr_areas_coll.end(); ++descr_areas)
   {
+    if (descr_areas->empty())
+      throw std::runtime_error(__PRETTY_FUNCTION__ + std::string(": empty areas description"));
+
     auto &_areas = areas_coll.emplace_back();
     for (auto desrcr_area = descr_areas->begin(); desrcr_area != descr_areas->end(); ++desrcr_area)
     {
+      if (static_cast<size_t>(desrcr_area->layer_num) >= layers.size())
+        throw std::runtime_error(__PRETTY_FUNCTION__ + std::string(": out of bounds layer number"));
+
       auto layer_num = desrcr_area->layer_num;
       uint32_t rows = layers[layer_num]->neurons.size();
       uint32_t cols = layers[layer_num]->neurons[0].size();
@@ -652,47 +660,15 @@ void print_image(scene_t *pscene)
   }
 }
 
-// Openers----------------------------------------------------------------
-
-// void print_weights_t::operator()(brain_coord_t layer_num, brain_coord_t row_num)
-// {
-//   std::lock_guard<atomic_mutex> guard(wmutex);
-//   auto &layer = phead->layers[layer_num];
-//   auto &neurons = layer->neurons;
-//   auto &row = neurons[row_num];
-//   for (auto col = row.begin(); col != row.end(); ++col)
-//   {
-//     auto &neuron = layer->neuron_ref(row_num, col - row.begin());
-//     for (auto &synapse : neuron.synapses)
-//       weights_file << synapse.weight << " ";
-//     weights_file << std::endl;
-//   }
-//   weights_file << std::endl;
-// }
-
-// void head_t::print_output(brain_coord_t layer_num)
-// {
-//   for (size_t i = 0; i < layers.at(layer_num)->neurons.size(); ++i)
-//   {
-//     for (size_t j = 0; j < layers.at(layer_num)->neurons[i].size(); ++j)
-//     {
-//       std::cout << std::dynamic_pointer_cast<actuator_layer_t> //
-//                    (layers.at(layer_num))->neuron_ref(i, j).value()
-//                 << " ";
-//     }
-//     std::cout << std::endl;
-//   }
-// }
-
-// Actuator constructors ------------------------------------------------
-// actuator_layer_t::actuator_layer_t()
-// {
-//   ltype = TNN::layer_type::ACTUATOR;
-// }
-
-// actuator_layer_t::actuator_layer_t(brain_coord_t rows,
-//                                    brain_coord_t cols)
-// {
-//   ltype = TNN::layer_type::ACTUATOR;
-//   create_neurons(this, rows, cols);
-// }
+void head_t::print_worker_counters()
+{
+  for (auto &worker : workers)
+  {
+    std::stringstream buffer;
+    buffer << "layer " << worker.first.layer << " events counter";
+    std::static_pointer_cast<tworker_t<cortex_worker_t>>(worker.second)->events_counter.print(buffer.str());
+    buffer.str("");
+    buffer << "layer " << worker.first.layer << " weight events counter";
+    std::static_pointer_cast<tworker_t<cortex_worker_t>>(worker.second)->weight_events_counter.print(buffer.str());
+  }
+}

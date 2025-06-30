@@ -26,7 +26,11 @@ void fSIGINT_handler([[maybe_unused]] int _signal)
     stopp.store(true); // stop the coro loop
 }
 
+#ifdef TRACER_DEBUG
 void main_loop(phead_t phead, ptracer_t ptracer)
+#else
+void main_loop(phead_t phead)
+#endif
 {
     // Block SIGINT in all threads (including future threads)
     sigset_t mask;
@@ -68,7 +72,7 @@ void main_loop(phead_t phead, ptracer_t ptracer)
         auto index = phead->p_eyes_optics->scene_index;
         ptracer->set_scene_index(index);
 #else
-        if (!(phead->p_eyes_optics->scene_index % 100))
+        if (!(phead->p_eyes_optics->scene_index % nof_images_in_learning_epoque))
             std::cout << phead->p_eyes_optics->scene_index << std::endl;
 #endif
         phead->p_eyes_optics->zoom(0, 0, mnist_size, mnist_size);
@@ -81,8 +85,12 @@ void main_loop(phead_t phead, ptracer_t ptracer)
         // Think about scene
         if (first_time)
         {
-            // Start workers
+// Start workers
+#ifdef TRACER_DEBUG
             phead->wake_up(ptracer);
+#else
+            phead->wake_up();
+#endif
             // Unblock SIGINT only in main thread
             pthread_sigmask(SIG_UNBLOCK, &mask, nullptr);
             first_time = false;
@@ -121,7 +129,10 @@ void main_loop(phead_t phead, ptracer_t ptracer)
                 ++pos_in_test_set;
             }
         }
+        // if (!(phead->p_eyes_optics->scene_index % nof_images_in_learning_epoque))
+        //     phead->print_workers_counters();
     }
+    phead->print_workers_counters();
 
     // Stop workers
     phead->go_to_sleep();
@@ -151,15 +162,17 @@ int main()
 #ifndef READ_NET_FROM_FILE
         // Create network by description
         create_net(phead.get(), network_descr_t({{TNN::RETINA, mnist_size, mnist_size},
-                                                 {TNN::CORTEX, 14, 14},
-                                                 {TNN::CORTEX, 8, 8},
-                                                 //  {TNN::CORTEX, mnist_size / 4, mnist_size / 4},
+                                                 //  {TNN::CORTEX, 14, 14},
+                                                 {TNN::CORTEX, 28, 28},
+                                                 //  //  {TNN::CORTEX, mnist_size / 4, mnist_size / 4},
                                                  {TNN::COUCHING, 1, 10}},
 
-                                                {{0, 1, TNN::DOPHAMINE, 14 / 2},
-                                                 {1, 2, TNN::DOPHAMINE, 8 / 2},
-                                                 //  {2, 3, TNN::DOPHAMINE, 10 / 2}
-                                                 {2, 3, TNN::DOPHAMINE, 10 / 2}}));
+                                                {
+                                                    {0, 1, TNN::DOPHAMINE, 28 / 2},
+                                                    {1, 2, TNN::DOPHAMINE, 10 / 2} //,
+                                                                                   //  {2, 3, TNN::DOPHAMINE, 10 / 2}
+                                                    //  {2, 3, TNN::DOPHAMINE, 10 / 2}
+                                                }));
 
 #else
         // Read network from file
@@ -170,13 +183,12 @@ int main()
         main_loop(phead, ptracer);
         phead->save_model_to_file("../networks/net.out", ptracer);
 #else
-        main_loop(phead, nullptr);
-        phead->save_model_to_file("../networks/net.out", nullptr);
+        main_loop(phead);
+        phead->save_model_to_file("../networks/net.out");
 #endif
 #ifdef DEBUG
         phead->net_timer.print_avg_tick();
 #endif
-        phead->print_worker_counters();
     }
     std::cout << "Done" << std::endl;
     return 0;

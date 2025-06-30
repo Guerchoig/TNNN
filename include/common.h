@@ -14,12 +14,14 @@
 #include <thread>
 #include <array>
 #include <atomic>
+#include <tuple>
 
 // Mode of operation parameters
 // ----------------------------------------------
 // #define TRACER_DEBUG
+
 // #define READ_NET_FROM_FILE
-// #define DEBUG
+#define DEBUG
 // -----
 
 #ifdef DEBUG
@@ -48,10 +50,19 @@ using vector_2D_t = std::vector<std::vector<T>>;
 constexpr size_t mnist_size = 28;
 
 // learning params
-constexpr int image_show_delay = 200; // ms
+constexpr int image_show_delay = 50; // ms
 constexpr int nof_images_in_learning_epoque = 50;
-constexpr int nof_images_in_test_set = 10;
-constexpr uint32_t mnist_epoques = 20000;
+constexpr int nof_images_in_test_set = 5;
+constexpr uint32_t mnist_epoques = 5;
+
+#define tracer_period 100000;
+
+// Signum function
+template <typename T>
+int sgn(T val)
+{
+    return (T(0) < val) - (val < T(0));
+}
 
 /**
  * @brief Represents a color with red, green, blue, and alpha (transparency) components
@@ -205,8 +216,11 @@ struct weight_event_t
 constexpr uint32_t events_q_size = 1024;
 constexpr uint32_t weigths_q_size = 1024;
 
-using events_output_buf_t = std::unordered_map<address_t, std::unique_ptr<std::vector<neuron_event_t>>>;
-using weights_output_buf_t = std::unordered_map<address_t, std::unique_ptr<std::vector<weight_event_t>>>;
+// Vector of std::pair<layer, std::unique_ptr<std::vector<T>>>
+template <typename T>
+using output_buf_t = std::vector<std::pair<brain_coord_t, std::unique_ptr<std::vector<T>>>>;
+using events_output_buf_t = output_buf_t<neuron_event_t>;
+using weights_output_buf_t = output_buf_t<weight_event_t>;
 
 // Tracer interface types -----------------------------------------------
 using tracer_buf_t = std::vector<std::pair<neuron_address_t, std::uint8_t>>;
@@ -260,16 +274,16 @@ struct net_timer_t
 #ifdef DEBUG
     void print_avg_tick()
     {
-        std::cout << "Average tick: " << avg_tick << std::endl;
+        std::cout << "Average tick: " << avg_tick / 1000000 << std::endl;
     }
 #endif
 };
 
-class head_interface_t
-{
-public:
-    virtual void clear_scene_memory() = 0;
-};
+// class head_interface_t
+// {
+// public:
+//     virtual void clear_scene_memory() = 0;
+// };
 
 class tracer_interface_t
 {
@@ -281,11 +295,13 @@ struct counter_t
 {
     std::atomic<uint64_t> counter = 0;
     void inc() { counter.fetch_add(1, std::memory_order_relaxed); }
-    void inc_by(uint64_t value) { counter.fetch_add(value, std::memory_order_relaxed); }
+    void inc_by(uint64_t value)
+    {
+        counter.fetch_add(value, std::memory_order_relaxed);
+    }
     void zero() { counter.store(0, std::memory_order_relaxed); }
     void print(std::string name) { std::cout << name << ": " << counter.load() << std::endl; }
 };
 
 // void print_couch();
 inline unsigned nof_event_threads = 0;
-

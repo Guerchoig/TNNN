@@ -18,7 +18,7 @@ struct eyes_optics_t
     brain_coord_t top;
     brain_coord_t right;
     brain_coord_t bottom;
-    head_interface_t *phead;
+    // head_interface_t *phead;
     std::mutex moving_gaze;
 
     void zoom(int _left, int _top, brain_coord_t _width, brain_coord_t _heigth)
@@ -49,7 +49,7 @@ struct eyes_optics_t
         moving_gaze.lock();
         pscene = _pscene;
         scene_index++;
-        phead->clear_scene_memory();
+        // phead->clear_scene_memory();
         moving_gaze.unlock();
     }
 
@@ -99,11 +99,9 @@ struct eyes_optics_t
     }
 
     eyes_optics_t(brain_coord_t width = view_field_def_width,
-                  brain_coord_t heigth = view_field_def_heigth,
-                  head_interface_t *phead = nullptr) : scene_index{0}, left{0}, top{0},
-                                                       right(width - 1),
-                                                       bottom(heigth - 1),
-                                                       phead{phead}
+                  brain_coord_t heigth = view_field_def_heigth) : scene_index{0}, left{0}, top{0},
+                                                                  right(width - 1),
+                                                                  bottom(heigth - 1)
     {
     }
     ~eyes_optics_t()

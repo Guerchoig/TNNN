@@ -22,14 +22,14 @@ namespace tr
     constexpr unsigned nof_dubbs = 2;
     constexpr int dubb_len = 300;
     constexpr int label_len = 150;
-    constexpr float decrease = 0.001;
+    constexpr float fade_out_rate = 0.7;
     constexpr std::uint8_t transparent = 0xFF;
     constexpr unsigned nof_sprites = 8;
     constexpr unsigned scene_width = mnist_size;
     constexpr unsigned magnification = 9;
     constexpr std::uint8_t no_attenuation = 0xFF;
     constexpr int scene_index_width = 300;
-    constexpr clock_count_t period = 5;
+    constexpr clock_count_t period = tracer_period;
 }
 enum dubbs_t
 {
@@ -108,7 +108,7 @@ struct tracer_t
             for (unsigned j = 0; j < tr::scene_width; ++j)
                 for (unsigned k = 0; k < tr::scene_width; ++k)
                 {
-                    colors.at(i).at(j).at(k).g /= 2;
+                    colors.at(i).at(j).at(k).g *= (1 - tr::fade_out_rate);
                 }
     }
 

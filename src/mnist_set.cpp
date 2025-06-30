@@ -27,7 +27,7 @@ void mnist_set::init_set(const std::string &img_path,
 
 std::pair<scene_t *, uint8_t> mnist_set::next_image()
 {
-    if (static_cast<size_t>(scene_index) >= mnist_epoques) // scenes.size())
+    if (static_cast<size_t>(scene_index) >= mnist_epoques * (nof_images_in_learning_epoque + nof_images_in_test_set)) // scenes.size())
         return {nullptr, 0};
     return std::pair<scene_t *, uint8_t>(&(scenes[scene_index++]), labels[i_label++]);
 }

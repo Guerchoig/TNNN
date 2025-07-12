@@ -1,10 +1,9 @@
 #pragma once
-#include <boost/circular_buffer.hpp>
+// #include <boost/circular_buffer.hpp>
+#include "logger.h"
+#include <memory>
 #include <vector>
 #include <ratio>
-// #include <opencv2/core.hpp>
-// #include <opencv2/imgcodecs.hpp>
-// #include <opencv2/highgui.hpp>
 #include <stdlib.h>
 #include <chrono>
 #include <random>
@@ -18,7 +17,7 @@
 
 // Mode of operation parameters
 // ----------------------------------------------
-// #define TRACER_DEBUG
+// #define DEBUG_TRACER
 
 // #define READ_NET_FROM_FILE
 #define DEBUG
@@ -50,12 +49,14 @@ using vector_2D_t = std::vector<std::vector<T>>;
 constexpr size_t mnist_size = 28;
 
 // learning params
-constexpr int image_show_delay = 50; // ms
-constexpr int nof_images_in_learning_epoque = 50;
-constexpr int nof_images_in_test_set = 5;
-constexpr uint32_t mnist_epoques = 5;
+constexpr int image_show_delay = 1500; // ms
+constexpr int nof_images_in_learning_epoque = 15;
+constexpr int nof_images_in_test_set = 2;
+constexpr uint32_t mnist_epoques = 10;
 
-#define tracer_period 100000;
+#define tracer_period 3;
+
+inline TextLogger logger{"../logfile.txt "};
 
 // Signum function
 template <typename T>
@@ -213,8 +214,8 @@ struct weight_event_t
 
 // Workers's types and params -----------------------------------------------
 
-constexpr uint32_t events_q_size = 1024;
-constexpr uint32_t weigths_q_size = 1024;
+constexpr uint32_t events_q_size = 10;
+constexpr uint32_t weigths_q_size = 10;
 
 // Vector of std::pair<layer, std::unique_ptr<std::vector<T>>>
 template <typename T>
@@ -249,34 +250,17 @@ struct net_timer_t
     // std::chrono::time_point<std::chrono::high_resolution_clock> work;
     // net_timer_t() : work(std::chrono::high_resolution_clock::now()) {}
     std::atomic<clock_count_t> time_counter = 0;
-    std::atomic<clock_count_t> prev_moment = 0;
-    std::atomic<float> avg_tick = 0.0;
 
     clock_count_t time()
     {
         auto t = time_counter.fetch_add(1);
-#ifdef DEBUG
-        auto cur_time = clock();
-        if (t > 1)
-        {
-            auto dt = cur_time - prev_moment;
-            avg_tick = (avg_tick * (t - 2) + dt) / (t - 1);
-        }
-        prev_moment = cur_time;
-#endif
         return t;
     }
     clock_count_t time_moment()
     {
-        return (time_counter.load() - 1);
+        return time_counter.load();
     }
     net_timer_t() : time_counter(0) {}
-#ifdef DEBUG
-    void print_avg_tick()
-    {
-        std::cout << "Average tick: " << avg_tick / 1000000 << std::endl;
-    }
-#endif
 };
 
 // class head_interface_t
@@ -291,17 +275,7 @@ public:
     virtual void display_tracer_buf(std::shared_ptr<tracer_buf_t> item) = 0;
 };
 
-struct counter_t
-{
-    std::atomic<uint64_t> counter = 0;
-    void inc() { counter.fetch_add(1, std::memory_order_relaxed); }
-    void inc_by(uint64_t value)
-    {
-        counter.fetch_add(value, std::memory_order_relaxed);
-    }
-    void zero() { counter.store(0, std::memory_order_relaxed); }
-    void print(std::string name) { std::cout << name << ": " << counter.load() << std::endl; }
-};
+double retardation(uint64_t times);
+potential_t calc_dw(clock_count_t dt);
 
-// void print_couch();
 inline unsigned nof_event_threads = 0;

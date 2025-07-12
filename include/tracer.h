@@ -116,8 +116,11 @@ struct tracer_t
 
     void unlock_screen() { sfml_mutex.unlock(); }
 
-    void display_tracer_buf(std::shared_ptr<tracer_buf_t> item)
+    void display_tracer_buf(std::shared_ptr<tracer_buf_t> item, clock_count_t time_moment)
     {
+        if (time_moment % tr::period != 0)
+            return;
+            
         std::lock_guard<std::mutex> lock(sfml_mutex);
 
         window.setActive(true);
@@ -161,6 +164,16 @@ struct tracer_t
 
         window.draw(black_mask);
         window.draw(text);
+    }
+
+    std::shared_ptr<tracer_buf_t> get_tracer_buf() { return std::make_shared<tracer_buf_t>(); }
+    void push_to_buf(std::shared_ptr<tracer_buf_t> pbuf, brain_coord_t layer,
+                     brain_coord_t row, brain_coord_t col,
+                     uint8_t color, clock_count_t time_moment)
+    {
+        if (time_moment % tr::period == 0)
+            pbuf->push_back(std::make_pair<neuron_address_t,
+                                           uint8_t>({layer, row, col}, std::move(color)));
     }
 
     tracer_t(uint32_t h_resolution,

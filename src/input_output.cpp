@@ -374,7 +374,7 @@ std::istream &operator>>(std::istream &is, network_descr_t &dsc)
     return is;
 }
 
-#ifdef TRACER_DEBUG
+#ifdef DEBUG_TRACER
 void head_t::save_model_to_file(std::string file_name, [[maybe_unused]] std::shared_ptr<tracer_t> ptracer)
 #else
 void head_t::save_model_to_file(std::string file_name)
@@ -382,7 +382,7 @@ void head_t::save_model_to_file(std::string file_name)
 {
     try
     {
-#ifdef TRACER_DEBUG
+#ifdef DEBUG_TRACER
         ptracer->lock_screen();
 #endif
 
@@ -404,7 +404,7 @@ void head_t::save_model_to_file(std::string file_name)
 
         ofs.close();
 
-#ifdef TRACER_DEBUG
+#ifdef DEBUG_TRACER
         ptracer->unlock_screen();
 #endif
     }
@@ -414,7 +414,7 @@ void head_t::save_model_to_file(std::string file_name)
     }
 }
 
-#ifdef TRACER_DEBUG
+#ifdef DEBUG_TRACER
 void head_t::read_model_from_file(std::string file_name, [[maybe_unused]] std::shared_ptr<tracer_t> ptracer)
 #else
 void head_t::read_model_from_file(std::string file_name)

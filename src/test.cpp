@@ -26,7 +26,7 @@ void fSIGINT_handler([[maybe_unused]] int _signal)
     stopp.store(true); // stop the coro loop
 }
 
-#ifdef TRACER_DEBUG
+#ifdef DEBUG_TRACER
 void main_loop(phead_t phead, ptracer_t ptracer)
 #else
 void main_loop(phead_t phead)
@@ -52,7 +52,7 @@ void main_loop(phead_t phead)
     size_t epoque = 0;
     size_t pos_in_test_set = 0;
     // int times = 1;
-#ifdef TRACER_DEBUG
+#ifdef DEBUG_TRACER
     while (ptracer->poll_for_closed_event())
 #else
     while (!stopp.load())
@@ -68,7 +68,7 @@ void main_loop(phead_t phead)
         //     break;
         // Set appropriate scene
         phead->p_eyes_optics->set_scene(p.first);
-#ifdef TRACER_DEBUG
+#ifdef DEBUG_TRACER
         auto index = phead->p_eyes_optics->scene_index;
         ptracer->set_scene_index(index);
 #else
@@ -86,7 +86,7 @@ void main_loop(phead_t phead)
         if (first_time)
         {
 // Start workers
-#ifdef TRACER_DEBUG
+#ifdef DEBUG_TRACER
             phead->wake_up(ptracer);
 #else
             phead->wake_up();
@@ -126,16 +126,18 @@ void main_loop(phead_t phead)
             else
             {
                 phead->metrics.print_metrics();
+                std::cout << " Time moment:" << phead->net_timer.time_moment() << std::endl;
                 ++pos_in_test_set;
             }
         }
-        // if (!(phead->p_eyes_optics->scene_index % nof_images_in_learning_epoque))
-        //     phead->print_workers_counters();
+
+        phead->print_counters(phead->p_eyes_optics->scene_index);
     }
-    phead->print_workers_counters();
 
     // Stop workers
+    std::cout << "time: " << phead->net_timer.time_moment() << "\n";
     phead->go_to_sleep();
+    // phead->print_counters();
 }
 
 /**
@@ -146,12 +148,12 @@ void main_loop(phead_t phead)
 int main()
 {
 
-#ifdef TRACER_DEBUG
+#ifdef DEBUG_TRACER
     auto ptracer = std::move(std::make_shared<tracer_t>(1720, 1050));
 #endif
     {
         auto phead = std::move(std::make_shared<head_t>());
-#ifdef TRACER_DEBUG
+#ifdef DEBUG_TRACER
         ptracer->phead = phead;
 #endif
         pmnist = std::make_shared<mnist_set>();
@@ -179,17 +181,17 @@ int main()
         phead->read_model_from_file("../networks/net.out", nullptr);
 #endif
 
-#ifdef TRACER_DEBUG
+#ifdef DEBUG_TRACER
         main_loop(phead, ptracer);
         phead->save_model_to_file("../networks/net.out", ptracer);
 #else
         main_loop(phead);
         phead->save_model_to_file("../networks/net.out");
 #endif
-#ifdef DEBUG
-        phead->net_timer.print_avg_tick();
-#endif
     }
+
+    logger.dumpToFile(true, false);
+
     std::cout << "Done" << std::endl;
     return 0;
 }

@@ -49,10 +49,10 @@ using vector_2D_t = std::vector<std::vector<T>>;
 constexpr size_t mnist_size = 28;
 
 // learning params
-constexpr int image_show_delay = 1900; // ms
-constexpr int nof_images_in_learning_epoque = 8;
-constexpr int nof_images_in_test_set = 2;
-constexpr uint32_t mnist_epoques = 10;
+constexpr int image_show_delay = 1500; // ms
+constexpr int nof_images_in_learning_epoque = 1;
+constexpr int nof_images_in_test_set = 1;
+constexpr uint32_t mnist_epoques = 5;
 
 #define tracer_period 3;
 constexpr int weights_output_precision = 2;

@@ -19,7 +19,7 @@ using namespace TNN;
 using namespace params;
 
 // Constructors ************************************************************
-//              ************************************************************
+// *************************************************************************
 
 // Layer constructor's common ==============================================
 template <Is_layer T>
@@ -130,8 +130,8 @@ void tworker_t<Derived>::execute()
   {
     static_cast<Derived *>(this)->worker();
 
-    // if (layer_num == 1)
-    //   phead->save_choosen_weights({1, 13, 0}, {0, 1}, 9);
+    if (layer_num == 1)
+      phead->save_choosen_weights({1, 13, 0}, {0, 1}, 9);
 
     if (output_events_buf.size() > 0)
       move_to_workers<&tworker_t<Derived>::output_events_buf,
@@ -181,11 +181,7 @@ void tworker_t<Derived>::process_input_weights()
       auto &neuron = phead->neuron_ref(we.addr);
       auto &synapse = neuron.synapses.at(we.synapse_num);
       auto &post_neuron = phead->neuron_ref(synapse.target_addr);
-      stdp_weight_update(neuron,
-                         post_neuron,
-                         synapse,
-                         we.postsynaptic_spike_time,
-                         we.synapse_num);
+      stdp_weight_update(neuron, post_neuron, synapse, we.postsynaptic_spike_time);
     }
   }
 }
@@ -194,24 +190,20 @@ template <typename Derived>
 void tworker_t<Derived>::stdp_weight_update(neuron_t &neuron,
                                             [[maybe_unused]] neuron_t &post_neuron,
                                             synapse_t &synapse,
-                                            clock_count_t post_synaptic_spike_time,
-                                            [[maybe_unused]] brain_coord_t synapse_num)
+                                            clock_count_t post_synaptic_spike_time)
 {
 
   auto delta_time = calc_delta_time(neuron, post_synaptic_spike_time);
 
   // Update counters
-  // std::stringstream ss;
-  // ss << delta_time;
+  std::stringstream ss;
+  ss << delta_time;
 
   auto dw = calc_dw(delta_time);
 
-  // if (layer_num == 0 && synapse_num < 80)
-  //   logger << "dw:\t" << dw << "\t" << synapse.weight << std::endl;
-
   synapse.weight += dw;
 
-  // phead->layers[layer_num]->double_counters.inc_by<counters_t<double>::avg>("dw", dw);
+  phead->layers[layer_num]->double_counters.inc_by<counters_t<double>::avg>("dw", dw);
 
   // dw = ltp_delta_max * post_neuron.trace - ltd_delta_max * neuron.trace;
   // auto delta_time = post_synaptic_spike_time - neuron.last_fired; // delta_time
@@ -659,10 +651,10 @@ potential_t retina_leak_and_input([[maybe_unused]] neuron_t &neuron,
 potential_t calc_dw(clock_count_t dt)
 {
   assert(dt >= 0);
-  if (dt < zero_dt)
-    return pos_dw_rate * (zero_dt - dt);
+  if (dt > zero_dt)
+    return neg_dw_rate * (1 - alpha_dt * dt);
   else
-    return neg_dw_rate * (dt - zero_dt);
+    return dw_max * (1 - alpha_dt * dt);
 }
 
 // head_t functions -------------------------------------------------------------

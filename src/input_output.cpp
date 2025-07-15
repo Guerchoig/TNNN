@@ -24,9 +24,9 @@ double calc_delay(neuron_address_t src,
     return res;
 }
 
-void create_synapses_between_2_layers(head_t *phead,
+void create_synapses_for_one_neuron(head_t *phead,
                                       neuron_address_t src,
-                                      neuron_address_t trg,
+                                      neuron_address_t projection,
                                       TNN::ferment_t ferment,
                                       brain_coord_t radius)
 {
@@ -36,34 +36,34 @@ void create_synapses_between_2_layers(head_t *phead,
     std::mt19937 gen(rd());
     std::uniform_real_distribution<> w(0, 1);
 
-    auto trg_max_row = static_cast<brain_coord_t>(phead->layers[trg.layer]->neurons.size() - 1);
-    auto trg_max_col = static_cast<brain_coord_t>(phead->layers[trg.layer]->neurons[0].size() - 1);
+    auto trg_max_row = static_cast<brain_coord_t>(phead->layers[projection.layer]->neurons.size() - 1);
+    auto trg_max_col = static_cast<brain_coord_t>(phead->layers[projection.layer]->neurons[0].size() - 1);
 
     // radius is in terms of big layer
     for (brain_coord_t drow = -radius; drow <= radius; ++drow)
     {
-        brain_coord_t _row = trg.row + drow;
+        brain_coord_t _row = projection.row + drow;
         if (_row < 0 || _row > trg_max_row)
             continue;
         for (brain_coord_t dcol = -radius; dcol <= radius; ++dcol)
         {
-            brain_coord_t _col = trg.col + dcol;
+            brain_coord_t _col = projection.col + dcol;
             if (_col < 0 || _col > trg_max_col)
                 continue;
-            if (std::make_tuple(src.layer, src.row, src.col) != std::make_tuple(trg.layer, _row, _col))
+            if (std::make_tuple(src.layer, src.row, src.col) != std::make_tuple(projection.layer, _row, _col))
             {
-                neuron_address_t adr{trg.layer, _row, _col};
+                neuron_address_t adr{projection.layer, _row, _col};
                 forward_synapses.emplace_back(w(gen), ferment, std::move(adr));
 
                 // Couching layer synapses mirror input ones as if there were backward connections there
                 // so input sources become couching synapses targets
                 // the weights of those synapses are not used
                 // input synapse number is put into the weight field
-                if (phead->layers[trg.layer]->ltype == TNN::layer_type::COUCHING)
+                if (phead->layers[projection.layer]->ltype == TNN::layer_type::COUCHING)
                 {
                     neuron_address_t src_adr{src.layer, src.row, src.col};
 
-                    phead->neuron_ref(trg).synapses.emplace_back(forward_synapses.size() - 1, ferment, std::move(src_adr));
+                    phead->neuron_ref(projection).synapses.emplace_back(forward_synapses.size() - 1, ferment, std::move(src_adr));
                 }
             }
         }
@@ -94,15 +94,15 @@ void create_connections(head_t *phead, const conn_descr_coll_t &descriptions)
         for (auto it_row = src_neurons.begin(); it_row != src_neurons.end(); ++it_row)
         {
             auto src_row = static_cast<brain_coord_t>(it_row - src_neurons.begin());
-            auto trg_row = static_cast<brain_coord_t>(std::round(src_row * row_ratio));
+            auto projection_row = static_cast<brain_coord_t>(std::round(src_row * row_ratio));
 
             for (auto it_col = it_row->begin(); it_col != it_row->end(); ++it_col)
             {
                 auto src_col = static_cast<brain_coord_t>(it_col - it_row->begin());
-                auto trg_col = static_cast<brain_coord_t>(std::round(src_col * col_ratio));
+                auto projection_col = static_cast<brain_coord_t>(std::round(src_col * col_ratio));
 
-                create_synapses_between_2_layers(phead, {dsc->src_layer, src_row, src_col},
-                                                 {dsc->trg_layer, trg_row, trg_col},
+                create_synapses_for_one_neuron(phead, {dsc->src_layer, src_row, src_col},
+                                                 {dsc->trg_layer, projection_row, projection_col},
                                                  dsc->ferment,
                                                  dsc->radius);
             }

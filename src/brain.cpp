@@ -13,12 +13,13 @@
 #include <csignal>
 #include <algorithm>
 #include <cmath>
+#include <iomanip>
 
 using namespace TNN;
 using namespace params;
 
 // Constructors ************************************************************
-// *************************************************************************
+//              ************************************************************
 
 // Layer constructor's common ==============================================
 template <Is_layer T>
@@ -129,6 +130,9 @@ void tworker_t<Derived>::execute()
   {
     static_cast<Derived *>(this)->worker();
 
+    // if (layer_num == 1)
+    //   phead->save_choosen_weights({1, 13, 0}, {0, 1}, 9);
+
     if (output_events_buf.size() > 0)
       move_to_workers<&tworker_t<Derived>::output_events_buf,
                       &tworker_t<Derived>::input_events>();
@@ -177,7 +181,11 @@ void tworker_t<Derived>::process_input_weights()
       auto &neuron = phead->neuron_ref(we.addr);
       auto &synapse = neuron.synapses.at(we.synapse_num);
       auto &post_neuron = phead->neuron_ref(synapse.target_addr);
-      stdp_weight_update(neuron, post_neuron, synapse, we.postsynaptic_spike_time);
+      stdp_weight_update(neuron,
+                         post_neuron,
+                         synapse,
+                         we.postsynaptic_spike_time,
+                         we.synapse_num);
     }
   }
 }
@@ -186,20 +194,24 @@ template <typename Derived>
 void tworker_t<Derived>::stdp_weight_update(neuron_t &neuron,
                                             [[maybe_unused]] neuron_t &post_neuron,
                                             synapse_t &synapse,
-                                            clock_count_t post_synaptic_spike_time)
+                                            clock_count_t post_synaptic_spike_time,
+                                            [[maybe_unused]] brain_coord_t synapse_num)
 {
 
   auto delta_time = calc_delta_time(neuron, post_synaptic_spike_time);
 
   // Update counters
-  std::stringstream ss;
-  ss << delta_time;
+  // std::stringstream ss;
+  // ss << delta_time;
 
   auto dw = calc_dw(delta_time);
 
+  // if (layer_num == 0 && synapse_num < 80)
+  //   logger << "dw:\t" << dw << "\t" << synapse.weight << std::endl;
+
   synapse.weight += dw;
 
-  phead->layers[layer_num]->double_counters.inc_by<counters_t<double>::avg>("dw", dw);
+  // phead->layers[layer_num]->double_counters.inc_by<counters_t<double>::avg>("dw", dw);
 
   // dw = ltp_delta_max * post_neuron.trace - ltd_delta_max * neuron.trace;
   // auto delta_time = post_synaptic_spike_time - neuron.last_fired; // delta_time
@@ -506,8 +518,7 @@ void tworker_t<Derived>::cortex_process()
   auto couching_mode = phead->couching_mode.load();
 
   process_input_weights();
-
-  auto player = phead->layers[static_cast<Derived *>(this)->layer_num];
+  // auto player = phead->layers[static_cast<Derived *>(this)->layer_num];
   // player->ticks_counter.start_tick();
   cortex_process_input_events(couching_mode);
   // player->ticks_counter.stop_tick();
@@ -648,10 +659,10 @@ potential_t retina_leak_and_input([[maybe_unused]] neuron_t &neuron,
 potential_t calc_dw(clock_count_t dt)
 {
   assert(dt >= 0);
-  if (dt > zero_dt)
-    return neg_dw_rate * (1 - alpha_dt * dt);
+  if (dt < zero_dt)
+    return pos_dw_rate * (zero_dt - dt);
   else
-    return dw_max * (1 - alpha_dt * dt);
+    return neg_dw_rate * (dt - zero_dt);
 }
 
 // head_t functions -------------------------------------------------------------
@@ -746,4 +757,44 @@ double retardation(uint64_t times)
   while (times--)
     res = exp(-times);
   return res;
+}
+
+void head_t::save_choosen_weights(const neuron_address_t &addr, const std::pair<brain_coord_t, brain_coord_t> &direction, const brain_coord_t distance) const
+{
+  assert(static_cast<size_t>(addr.layer + 1) < layers.size());
+
+  auto &layer = *layers[addr.layer];
+
+  // Make weights buffer
+  std::vector<std::vector<double>> one_neuron_weights;
+  auto buf_size_x = direction.first * distance;
+  auto buf_size_y = direction.second * distance;
+  for (auto p = 0; p <= buf_size_x; ++p)
+    one_neuron_weights.push_back(std::vector<double>(buf_size_y + 1));
+
+  // Fill buffer for all choosen neurons
+  auto max_i = addr.row + buf_size_x;
+  auto max_j = addr.col + buf_size_y;
+  auto j = addr.col;
+  for (auto i = addr.row; i <= max_i && j <= max_j; i += direction.first, j += direction.second)
+  {
+    auto &neuron = layer.neuron_ref(i, j);
+
+    // Fill buffer for one neuron
+    for (auto synapse : neuron.synapses)
+      one_neuron_weights[synapse.target_addr.row][synapse.target_addr.col] = synapse.weight;
+
+    // Print buffer
+
+    for (size_t k = 0; k < one_neuron_weights.size(); ++k, logger << std::endl)
+      for (size_t l = 0; l < one_neuron_weights[k].size(); ++l, logger << std::endl)
+      {
+        logger << "Neuron:\t" << i << "\t" << j << "\t" << "Synapse:\t" << k << "\t" << l << "\t";
+        logger << std::setprecision(weights_output_precision) << one_neuron_weights[k][l] << "\t";
+      }
+
+    // Clear buffer
+    for (auto &row : one_neuron_weights)
+      std::fill(row.begin(), row.end(), 0.0);
+  }
 }

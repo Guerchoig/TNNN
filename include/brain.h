@@ -26,7 +26,7 @@ namespace params
 
 	// Cortex's neuron params-----------------------------------------------
 	constexpr potential_t u_rest = 0.0;
-	constexpr potential_t initial_neuron_threshold = 5;
+	constexpr potential_t initial_neuron_threshold = 6;
 	// constexpr potential_t threshold_rally_rate = 0.4;
 	// constexpr potential_t inc_threshold_after_fired = 1.5;
 	// constexpr potential_t threshold_increment = 0.1; // M_PI;
@@ -53,12 +53,12 @@ namespace params
 	// constexpr potential_t w_max = 2.0;			// Maximum weight value
 	// constexpr potential_t w_min = 0.0;			// Minimum weight value
 	// constexpr potential_t delta_trace = 0.2;	// Trace increase delta
-	constexpr potential_t dw_max = 0.1;
-	constexpr potential_t dw_min = -0.1;
-	constexpr clock_count_t zero_dt = 2;
-	constexpr potential_t alpha_dt = 1.0 / zero_dt;
+	constexpr potential_t dw_max = 0.8;
+	constexpr potential_t dw_min = -0.5;
+	constexpr potential_t zero_dt = 3.5;
 	constexpr clock_count_t max_dt = sizeof(prev_spikes_t) - 1;
-	constexpr potential_t neg_dw_rate = (dw_min * zero_dt) / (zero_dt - max_dt);
+	constexpr potential_t neg_dw_rate = dw_min / (max_dt - zero_dt);
+	constexpr potential_t pos_dw_rate = dw_max / zero_dt;
 	constexpr clock_count_t infinite_delay = max_dt + 1;
 }
 
@@ -242,7 +242,11 @@ potential_t retina_leak_and_input(neuron_t &neuron, scene_signal_t signal,
 								  clock_count_t delta_time);
 potential_t cortex_leak_and_input(neuron_t &neuron, synapse_t &synapse, clock_count_t delta_time);
 
-void stdp_weight_update(neuron_t &neuron, neuron_t &post_neuron, synapse_t &synapse, clock_count_t afferent_spike_time);
+// void stdp_weight_update(neuron_t &neuron,
+// 						[[maybe_unused]] neuron_t &post_neuron,
+// 						synapse_t &synapse,
+// 						clock_count_t postsynaptic_spike_time,
+// 						[[maybe_unused]] brain_coord_t synapse_num);
 
 using layers_t = std::vector<std::shared_ptr<layer_t>>;
 
@@ -373,7 +377,9 @@ struct head_t
 	void save_model_to_file(std::string file_name);
 	void read_model_from_file(std::string file_name);
 #endif
-
+	void save_choosen_weights(const neuron_address_t &addr,
+							  const std::pair<brain_coord_t, brain_coord_t> &direction,
+							  const brain_coord_t distance) const;
 	head_t();
 };
 
@@ -425,7 +431,8 @@ struct tworker_t : public worker_base_t
 	void stdp_weight_update(neuron_t &neuron,
 							[[maybe_unused]] neuron_t &post_neuron,
 							synapse_t &synapse,
-							clock_count_t afferent_spike_time);
+							clock_count_t afferent_spike_time,
+							[[maybe_unused]] brain_coord_t synapse_num);
 
 	void store_one_metric(neuron_event_t &e, bool couching_mode, bool fired);
 

@@ -131,7 +131,7 @@ void main_loop(phead_t phead)
             }
         }
 
-        phead->print_counters(phead->p_eyes_optics->scene_index);
+        // phead->print_counters(phead->p_eyes_optics->scene_index);
     }
 
     // Stop workers
@@ -170,11 +170,12 @@ int main()
                                                  {TNN::COUCHING, 1, 10}},
 
                                                 {
-                                                    {0, 1, TNN::DOPHAMINE, 28 / 2},
-                                                    {1, 2, TNN::DOPHAMINE, 10 / 2} //,
+                                                    {0, 1, TNN::DOPHAMINE, 28 },
+                                                    {1, 2, TNN::DOPHAMINE, 10} //,
                                                                                    //  {2, 3, TNN::DOPHAMINE, 10 / 2}
                                                     //  {2, 3, TNN::DOPHAMINE, 10 / 2}
                                                 }));
+        
 
 #else
         // Read network from file
@@ -190,7 +191,7 @@ int main()
 #endif
     }
 
-    logger.dumpToFile(true, false);
+    logger.dump_to_file(true, false);
 
     std::cout << "Done" << std::endl;
     return 0;

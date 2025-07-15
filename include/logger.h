@@ -7,91 +7,115 @@
 #include <iostream>
 #include <stdexcept>
 
-class TextLogger {
+class text_logger
+{
 public:
-    explicit TextLogger(const std::string& logFilePath = "")
-        : m_logFilePath(logFilePath) {}
+    explicit text_logger(const std::string &logFilePath = "")
+        : m_log_file_path(logFilePath) {}
 
-    ~TextLogger() {
-        flushCurrentLine();
+    ~text_logger()
+    {
+        flush_current_line();
     }
 
-    void setLogFile(const std::string& path) {
-        m_logFilePath = path;
+    void set_log_file(const std::string &path)
+    {
+        m_log_file_path = path;
     }
 
-    template<typename T>
-    TextLogger& operator<<(const T& data) {
-        m_currentLine << data;
+    template <typename T>
+    text_logger &operator<<(const T &data)
+    {
+        m_current_line << data;
         return *this;
     }
 
-    TextLogger& operator<<(std::ostream& (*manip)(std::ostream&)) {
-        if (manip == static_cast<std::ostream& (*)(std::ostream&)>(std::endl)) {
-            flushCurrentLine();
-        } else {
-            m_currentLine << manip;
+    text_logger &operator<<(std::ostream &(*manip)(std::ostream &))
+    {
+        if (manip == static_cast<std::ostream &(*)(std::ostream &)>(std::endl))
+        {
+            flush_current_line();
+        }
+        else
+        {
+            m_current_line << manip;
         }
         return *this;
     }
 
-    void dumpToFile(bool clearAfter = false, bool append = true) {
-        if (m_logFilePath.empty()) {
+    void dump_to_file(bool clearAfter = false, bool append = true)
+    {
+        if (m_log_file_path.empty())
+        {
             throw std::runtime_error("Log file path not set");
         }
-        flushCurrentLine();
+        flush_current_line();
         std::ofstream file;
-        if (append) {
-            file.open(m_logFilePath, std::ios_base::app);
-        } else {
-            file.open(m_logFilePath);
+        if (append)
+        {
+            file.open(m_log_file_path, std::ios_base::app);
         }
-        if (!file.is_open()) {
-            throw std::runtime_error("Failed to open log file: " + m_logFilePath);
+        else
+        {
+            file.open(m_log_file_path);
         }
-        for (const auto& line : m_buffer) {
+        if (!file.is_open())
+        {
+            throw std::runtime_error("Failed to open log file: " + m_log_file_path);
+        }
+        for (const auto &line : m_buffer)
+        {
             file << line << '\n';
         }
         file.close();
-        if (clearAfter) {
-            clearBuffer();
+        if (clearAfter)
+        {
+            clear_buffer();
         }
     }
 
-    void dumpToConsole(bool clearAfter = false) {
-        flushCurrentLine();
-        for (const auto& line : m_buffer) {
+    void dump_to_console(bool clearAfter = false)
+    {
+        flush_current_line();
+        for (const auto &line : m_buffer)
+        {
             std::cout << line << '\n';
         }
-        if (clearAfter) {
-            clearBuffer();
+        if (clearAfter)
+        {
+            clear_buffer();
         }
     }
 
-    void clearBuffer() {
+    void clear_buffer()
+    {
         m_buffer.clear();
     }
 
-    void clearCurrentLine() {
-        m_currentLine.str("");
-        m_currentLine.clear();
+    void clear_current_line()
+    {
+        m_current_line.str("");
+        m_current_line.clear();
     }
 
-    void clearAll() {
-        clearBuffer();
-        clearCurrentLine();
+    void clear_all()
+    {
+        clear_buffer();
+        clear_current_line();
     }
 
 private:
-    void flushCurrentLine() {
-        std::string line = m_currentLine.str();
-        if (!line.empty()) {
+    void flush_current_line()
+    {
+        std::string line = m_current_line.str();
+        if (!line.empty())
+        {
             m_buffer.push_back(line);
-            clearCurrentLine();
+            clear_current_line();
         }
     }
 
-    std::ostringstream m_currentLine;
+    std::ostringstream m_current_line;
     std::vector<std::string> m_buffer;
-    std::string m_logFilePath;
+    std::string m_log_file_path;
 };

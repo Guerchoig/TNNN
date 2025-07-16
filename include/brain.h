@@ -30,8 +30,8 @@ namespace params
 	// constexpr potential_t threshold_rally_rate = 0.4;
 	// constexpr potential_t inc_threshold_after_fired = 1.5;
 	// constexpr potential_t threshold_increment = 0.1; // M_PI;
-	constexpr potential_t high_threshold_base = 5.0; // M_PI;
-	constexpr potential_t low_threshold_base = -1;
+	constexpr potential_t high_threshold_base = 10.0; // M_PI;
+	constexpr potential_t low_threshold_base = -10;
 	constexpr potential_t normal_threshold_base = 0.0;
 
 	constexpr uint nof_classes = 10;
@@ -53,8 +53,8 @@ namespace params
 	// constexpr potential_t w_max = 2.0;			// Maximum weight value
 	// constexpr potential_t w_min = 0.0;			// Minimum weight value
 	// constexpr potential_t delta_trace = 0.2;	// Trace increase delta
-	constexpr potential_t dw_max = 0.1;
-	constexpr potential_t dw_min = -0.1;
+	constexpr potential_t dw_max = 0.2;
+	constexpr potential_t dw_min = -0.2;
 	constexpr clock_count_t zero_dt = 2;
 	constexpr potential_t alpha_dt = 1.0 / zero_dt;
 	constexpr clock_count_t max_dt = sizeof(prev_spikes_t) - 1;

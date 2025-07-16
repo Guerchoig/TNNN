@@ -196,14 +196,14 @@ void tworker_t<Derived>::stdp_weight_update(neuron_t &neuron,
   auto delta_time = calc_delta_time(neuron, post_synaptic_spike_time);
 
   // Update counters
-  std::stringstream ss;
-  ss << delta_time;
+  // std::stringstream ss;
+  // ss << delta_time;
 
   auto dw = calc_dw(delta_time);
 
   synapse.weight += dw;
 
-  phead->layers[layer_num]->double_counters.inc_by<counters_t<double>::avg>("dw", dw);
+  // phead->layers[layer_num]->double_counters.inc_by<counters_t<double>::avg>("dw", dw);
 
   // dw = ltp_delta_max * post_neuron.trace - ltd_delta_max * neuron.trace;
   // auto delta_time = post_synaptic_spike_time - neuron.last_fired; // delta_time
@@ -651,10 +651,10 @@ potential_t retina_leak_and_input([[maybe_unused]] neuron_t &neuron,
 potential_t calc_dw(clock_count_t dt)
 {
   assert(dt >= 0);
-  if (dt > zero_dt)
-    return neg_dw_rate * (1 - alpha_dt * dt);
+  if (dt ==0)
+    return dw_max;
   else
-    return dw_max * (1 - alpha_dt * dt);
+    return dw_min;
 }
 
 // head_t functions -------------------------------------------------------------

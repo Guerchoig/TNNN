@@ -5,7 +5,7 @@
 #include <array>
 #include <memory>
 
-using img_t = std::array<uint8_t, mnist_size * mnist_size>;
+using img_t = std::array<uint8_t, mnist_len>;
 using img_set_t = std::vector<img_t>;
 
 using labels_t = std::vector<uint8_t>;

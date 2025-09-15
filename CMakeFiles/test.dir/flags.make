@@ -6,5 +6,5 @@ CXX_DEFINES = -DMNIST_DATA_LOCATION=\"/home/sasha/source/tnnn/MNIST/\"
 
 CXX_INCLUDES = -I/home/sasha/source/tnnn -I/home/sasha/source/tnnn/include -I/home/sasha/source/tnnn/atomic_queue/include/atomic_queue
 
-CXX_FLAGS = -pg -std=gnu++23 -O0 -Wall -Wextra -pedantic -Werror -pg
+CXX_FLAGS = -pg -pg -g -std=gnu++23 -O0 -Wall -Wextra -pedantic -Werror
 

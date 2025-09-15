@@ -9,9 +9,6 @@
 #include <memory>
 #include <mutex>
 
-constexpr size_t queue_size = 60000;
-constexpr uint8_t DARK = 0;
-
 namespace tr
 {
     constexpr int inter_sells = 5;  // pixels
@@ -31,6 +28,7 @@ namespace tr
     constexpr int scene_index_width = 300;
     constexpr clock_count_t period = tracer_period;
 }
+
 enum dubbs_t
 {
     SCENE_INDEX = 0
@@ -56,6 +54,7 @@ struct tracer_t
     std::array<sf::String, tr::nof_dubbs> labels = {{"Scene No: "}};
     std::array<sf::String, tr::nof_dubbs> strings = {{""}};
     uint64_t scene_index = 0LL;
+
     // Black mask to erase previous text
     sf::RectangleShape black_mask;
     sf::RenderWindow window;
@@ -120,7 +119,7 @@ struct tracer_t
     {
         if (time_moment % tr::period != 0)
             return;
-            
+
         std::lock_guard<std::mutex> lock(sfml_mutex);
 
         window.setActive(true);
@@ -132,7 +131,7 @@ struct tracer_t
         for (auto it = item->begin(); it != item->end(); ++it)
         {
             auto addr = it->first;
-            colors.at(addr.layer).at(addr.row).at(addr.col).g = it->second;
+            colors.at(addr.layer).at(addr.abs_row).at(addr.abs_col).g = it->second;
         }
 
         // Update screen
@@ -166,14 +165,17 @@ struct tracer_t
         window.draw(text);
     }
 
-    std::shared_ptr<tracer_buf_t> get_tracer_buf() { return std::make_shared<tracer_buf_t>(); }
-    void push_to_buf(std::shared_ptr<tracer_buf_t> pbuf, brain_coord_t layer,
-                     brain_coord_t row, brain_coord_t col,
+    std::shared_ptr<tracer_buf_t> get_tracer_buf()
+    {
+        return std::make_shared<tracer_buf_t>();
+    }
+
+    void push_to_buf(std::shared_ptr<tracer_buf_t> pbuf, abs_address_t addr,
                      uint8_t color, clock_count_t time_moment)
     {
         if (time_moment % tr::period == 0)
-            pbuf->push_back(std::make_pair<neuron_address_t,
-                                           uint8_t>({layer, row, col}, std::move(color)));
+            pbuf->push_back(std::make_pair<abs_address_t, uint8_t>(std::move(addr),
+                                                                   std::move(color)));
     }
 
     tracer_t(uint32_t h_resolution,
@@ -227,5 +229,3 @@ struct tracer_t
                         sf::Vector2f(tr::scene_index_width, tr::char_size));
     }
 };
-
-using ptracer_t = std::shared_ptr<tracer_t>;

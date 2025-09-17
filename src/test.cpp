@@ -163,6 +163,14 @@ int main()
                                  ptracer
 #endif
                 );
+
+                phead->add_layer(TNN::CORTEX, mnist_size , mnist_size , first_neuron_index, params::usual_nof_pieces_per_layer, phead
+#ifdef DEBUG_TRACER
+                                 ,
+                                 ptracer
+#endif
+                );
+
                 phead->add_layer(TNN::COUCHING, 1, params::nof_cathegories, first_neuron_index, params::nof_pieces_in_last_layer, phead
 #ifdef DEBUG_TRACER
                                  ,
@@ -172,6 +180,7 @@ int main()
 
                 phead->add_connections(0, 1, TNN::DOPHAMINE, TNN::FULLY_CONNECTED);
                 phead->add_connections(1, 2, TNN::DOPHAMINE, TNN::FULLY_CONNECTED);
+                phead->add_connections(2, 3, TNN::DOPHAMINE, TNN::FULLY_CONNECTED);
 
                 // phead->print_nof_synapses_per_neuron();
                 // exit(0);

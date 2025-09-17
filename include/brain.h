@@ -48,7 +48,7 @@ namespace params
 	// Weights update  params------------------------------------------------
 	constexpr potential_t dw_max = 0.1;
 	constexpr clock_count_t dw_plus_time = 2;
-	constexpr clock_count_t dw_minus_time = 20;
+	constexpr clock_count_t dw_minus_time = 2;
 	constexpr potential_t dw_alpha_plus = 1.0 / dw_plus_time;
 	constexpr potential_t dw_alpha_minus = 1.0 / dw_minus_time;
 }

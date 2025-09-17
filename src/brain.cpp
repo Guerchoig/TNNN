@@ -15,10 +15,41 @@
 #include <cmath>
 #include <iomanip>
 
+/**
+ * @file brain.cpp
+ * @brief Implementation of the neural network's core functionality
+ *
+ * This file implements a spiking neural network with following layer types:
+ * - Retina layer: Handles input processing
+ * - Cortex layer: Processes intermediate neural computations
+ * - Couching layer: Handles output processing
+ *
+ * The network uses STDP (Spike-Timing-Dependent Plasticity) for learning
+ * and implements parallel processing using a piece-based architecture.
+ */
+
 using namespace TNN;
 using namespace params;
 
-// Constructors ************************************************************
+/**
+ * Network Construction Functions
+ * These functions handle the initialization and setup of the neural network
+ */
+
+/**
+ * @brief Adds a new layer to the neural network
+ *
+ * @param ltype Type of layer (RETINA, CORTEX, or COUCHING)
+ * @param neurons_rows Number of rows in the layer
+ * @param neurons_cols Number of columns in the layer
+ * @param first_neuron_index Starting index for neurons in this layer (updated by function)
+ * @param nof_pieces Number of parallel processing pieces to split the layer into
+ * @param phead Pointer to the head object
+ * @param ptracer Debug tracer object (if DEBUG_TRACER is defined)
+ *
+ * Creates a new layer of specified type and dimensions, initializing all neurons
+ * and dividing the layer into pieces for parallel processing.
+ */
 void head_t::add_layer(TNN::layer_type ltype, brain_coord_t neurons_rows, brain_coord_t neurons_cols,
                        brain_coord_t &first_neuron_index, brain_coord_t nof_pieces, std::shared_ptr<head_t> phead
 #ifdef DEBUG_TRACER
@@ -76,6 +107,18 @@ void head_t::add_layer(TNN::layer_type ltype, brain_coord_t neurons_rows, brain_
 
 constexpr int out_of_range = -1;
 
+/**
+ * @brief Creates synaptic connections between two layers
+ *
+ * @param src_layer Source layer index
+ * @param trg_layer Target layer index
+ * @param ferment Neurotransmitter type for the connections
+ * @param connection_type Type of connection pattern
+ *
+ * Establishes synaptic connections between neurons in the source and target layers.
+ * Each connection is initialized with a random weight and the appropriate neurotransmitter type.
+ * Both source and target neurons maintain lists of their synaptic connections.
+ */
 void head_t::add_connections(brain_coord_t src_layer, brain_coord_t trg_layer,
                              TNN::ferment_t ferment, TNN::connection_type connection_type)
 {
@@ -229,11 +272,23 @@ void process_input_weights(neuron_t &cur_neuron, head_t &phead, clock_count_t po
   }
 }
 
+/**
+ * @brief Updates synaptic weights according to STDP learning rule
+ *
+ * @param pre_neuron Presynaptic neuron
+ * @param post_neuron Postsynaptic neuron
+ * @param synapse The synapse to update
+ * @param post_synaptic_spike_time Time of the postsynaptic spike
+ *
+ * Implements Spike-Timing-Dependent Plasticity (STDP):
+ * - Strengthens connections where presynaptic spikes precede postsynaptic spikes
+ * - Weakens connections where presynaptic spikes follow postsynaptic spikes
+ * - Uses exponential decay functions for both strengthening and weakening
+ */
 void stdp_weight_update(neuron_t &pre_neuron,
                         neuron_t &post_neuron,
                         synapse_t &synapse,
                         clock_count_t post_synaptic_spike_time)
-
 {
   static const potential_t dw_plus = std::exp(-dw_alpha_plus);
   static const potential_t dw_minus = std::exp(-dw_alpha_minus);
@@ -244,24 +299,28 @@ void stdp_weight_update(neuron_t &pre_neuron,
 
   // Unprocessed time length
   size_t len = 1;
-  for (; len < spiking_history_len; ++len)
+  auto max_len = std::min(static_cast<clock_count_t>(spiking_history_len), post_synaptic_spike_time + 1);
+  for (; static_cast<clock_count_t>(len) < max_len; ++len)
     if (post_history.test(len))
       break;
-
-  history_spikes_t post_mask(~0ULL); // to all ones
-  post_mask = ~(post_mask <<= len);
 
   if (post_synaptic_spike_time > pre_neuron.get_last_fired())
     pre_history <<= (post_synaptic_spike_time - pre_neuron.get_last_fired());
   else if (post_synaptic_spike_time < pre_neuron.get_last_fired())
     pre_history >>= (pre_neuron.get_last_fired() - post_synaptic_spike_time);
 
-  pre_history &= (post_mask & post_history);
-  auto pos_count = pre_history.count();
-  auto neg_count = len - pos_count;
+  potential_t history_term = 0.0;
+  potential_t plus_term = 1.0;
+  potential_t minus_term = 1.0;
+  for (size_t i = 0; i < len; ++i, plus_term *= dw_plus, minus_term *= dw_minus)
+  {
+    if (pre_history.test(i))
+      history_term += plus_term;
+    else
+      history_term -= minus_term;
+  }
 
-  auto history_term = dw_max * (exp_term(pos_count, dw_plus) - exp_term(neg_count, dw_minus));
-  synapse.set_weight(synapse.get_weight() + history_term);
+  synapse.set_weight(synapse.get_weight() + dw_max * history_term);
 }
 
 void update_postsynaptic_neurons(neuron_t &cur_neuron, head_t &phead,
@@ -296,6 +355,18 @@ potential_t fire_neuron(neuron_t &cur_neuron, piece_t &piece, clock_count_t delt
   return u_res;
 }
 
+/**
+ * @brief Processes neurons in the retina layer
+ *
+ * @param piece The piece of the layer to process
+ *
+ * Handles the first stage of neural processing:
+ * - Reads input signals from the scene
+ * - Applies retinal-specific leak and input functions
+ * - Generates spikes based on membrane potential threshold
+ * - Updates weights of outgoing synapses when spikes occur
+ * - Optionally traces neural activity for debugging
+ */
 void retina_layer_t::process_neurons(piece_t &piece)
 {
 
@@ -348,6 +419,18 @@ void retina_layer_t::process_neurons(piece_t &piece)
 #endif
 }
 
+/**
+ * @brief Processes neurons in the cortex layer
+ *
+ * @param piece The piece of the layer to process
+ *
+ * Implements the main processing in the neural network:
+ * - Checks for neurons that have reached firing threshold
+ * - Updates synaptic weights using STDP when spikes occur
+ * - Propagates spikes to connected neurons
+ * - Maintains neural activity history for learning
+ * - Handles debug tracing if enabled
+ */
 void cortex_layer_t::process_neurons(piece_t &piece)
 {
 #ifdef DEBUG_TRACER
@@ -415,7 +498,7 @@ void couching_layer_t::process_neurons(piece_t &piece)
     }
 
     cur_neuron.set_u_mem(u_res);
-    phead->store_one_metric(fired, i);
+    phead->store_one_metric(fired, i - piece.get_first_index());
   }
   if (piece.is_last_piece_in_layer())
   {
@@ -432,6 +515,20 @@ void couching_layer_t::process_neurons(piece_t &piece)
 
 // // Potentials & Weights updater functions------------------------------------------
 
+/**
+ * Neural Potential Calculation Functions
+ * These functions handle the computation of membrane potentials and synaptic inputs
+ */
+
+/**
+ * @brief Calculates leaked membrane potential for cortex neurons
+ *
+ * @param neuron The neuron to calculate potential for
+ * @param delta_time Time since last update
+ * @return The leaked membrane potential
+ *
+ * Implements exponential decay of membrane potential over time
+ */
 potential_t cortex_leaked_u(neuron_t &neuron, clock_count_t delta_time)
 {
   static const potential_t cortex_leak_alpha = std::exp(-params::cortex_leak_freq);
@@ -458,8 +555,19 @@ potential_t retina_leak_and_input([[maybe_unused]] neuron_t &neuron,
 
 // // head_t functions -------------------------------------------------------------
 
-void head_t::wake_up()
+/**
+ * Thread Management Functions
+ * Handle the parallel processing infrastructure of the neural network
+ */
 
+/**
+ * @brief Initializes and starts worker threads
+ *
+ * Creates worker threads for parallel processing of neural network pieces.
+ * The number of workers is determined by the nof_event_threads parameter,
+ * typically set to optimize performance based on available CPU cores.
+ */
+void head_t::wake_up()
 {
   // Init threads
   finish.store(false);

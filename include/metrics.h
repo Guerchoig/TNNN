@@ -7,9 +7,9 @@ struct metrics_t
 {
     enum results_t
     {
-        NOF_ATTEMPTS = 0,
-        TOTAL_SPIKES = 1,
-        LABELED_SPIKES = 2
+        UNLABELED_SPIKES = 0,
+        LABELED_SPIKES,
+        NO_SPIKES
     };
     std::array<std::atomic<uint64_t>, 4> results = {0, 0, 0, 0};
 
@@ -20,16 +20,21 @@ struct metrics_t
 
     void print_metrics()
     {
-        long nof_attempts = results[results_t::NOF_ATTEMPTS];
-        long total_spikes = results[results_t::TOTAL_SPIKES];
+        long no_spikes = results[results_t::NO_SPIKES];
+        long unlabeled_spikes = results[results_t::UNLABELED_SPIKES];
         long labeled_spikes = results[results_t::LABELED_SPIKES];
+        auto total_spikes = unlabeled_spikes + labeled_spikes;
+        auto nof_attempts = total_spikes + no_spikes;
+        auto precision = total_spikes == 0 ? 0 : static_cast<float>(labeled_spikes) / static_cast<float>(total_spikes) * 100.0f;
+        auto accuracy = nof_attempts == 0 ? 0 : static_cast<float>(labeled_spikes) / static_cast<float>(nof_attempts) * 100.0f;
 
-        auto precision = nof_attempts == 0 ? 0 : labeled_spikes / nof_attempts;
-
-        std::cout << " Precision: " << precision
-                  << " Nof attempts: " << nof_attempts
+        std::cout << " Accuracy: " << accuracy << "%"
+                  << " Precision: " << precision << "%"
+                  << " No spikes: " << no_spikes
                   << " Labeled spikes: " << labeled_spikes
+                  << " Unlabeled spikes: " << unlabeled_spikes
                   << " Total spikes: " << total_spikes
+                  << " Attempts: " << nof_attempts
                   << std::endl;
     }
     void reset()

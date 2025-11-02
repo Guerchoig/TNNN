@@ -19,42 +19,38 @@
 #include <fstream>
 #include <type_traits>
 #include <tuple>
-#include <bitset>
 #include <condition_variable>
 
 namespace params
 {
+	// Network params------------------------------------------------
 	constexpr brain_coord_t nof_cathegories = 10;
 	constexpr brain_coord_t usual_nof_pieces_per_layer = 16;
 	constexpr brain_coord_t nof_pieces_in_last_layer = 1;
 
-	// Synapse's params-----------------------------------------------
-	// constexpr double spike_velocity = 1.0;
-
-	// Cortex's neuron params-----------------------------------------------
+	// Neuron's membrana params-----------------------------------------------
 	constexpr potential_t u_rest = 0.0;
-	constexpr potential_t initial_neuron_threshold = 1.0;
+	constexpr potential_t cortex_leak_tau = 28.0; //  tics
 
+	// Neuron's threshold params-----------------------------------------------
+	constexpr potential_t initial_neuron_threshold = 0.01;
+	constexpr potential_t threshold_inc_per_spike = 0.001;
+	constexpr potential_t threshold_decrease_time = 15; // tics
 	constexpr potential_t normal_threshold_base = 0.0;
 
-	constexpr potential_t cortex_leak_tau = 10.0; //  tics
-	constexpr potential_t cortex_leak_freq = 1 / cortex_leak_tau;
-
 	// Visual detector's  params------------------------------------------------
-	// constexpr input_val_t visual_detector_threshold = 1;
 	constexpr scene_signal_t max_scene_amplitude = 255;
-	constexpr potential_t detector_alpha = 0.2 * initial_neuron_threshold / max_scene_amplitude;
+	constexpr int amplitude_quant_size = 32;
+	constexpr potential_t detector_alpha = initial_neuron_threshold;
 
 	// Weights update  params------------------------------------------------
-	constexpr potential_t dw_max = 0.1;
-	constexpr clock_count_t dw_plus_time = 2;
-	constexpr clock_count_t dw_minus_time = 2;
-	constexpr potential_t dw_alpha_plus = 1.0 / dw_plus_time;
-	constexpr potential_t dw_alpha_minus = 1.0 / dw_minus_time;
+	constexpr potential_t dw_max = 0.01;
+	constexpr potential_t dw_plus_time = 4.0;
+	constexpr potential_t dw_minus_time = 1.8;
 }
 
 using input_val_t = int;
-constexpr size_t spiking_history_len = 8;
+constexpr clock_count_t spiking_history_len = 8;
 using history_spikes_t = std::bitset<spiking_history_len>;
 
 constexpr clock_count_t empty_time = std::numeric_limits<clock_count_t>::max();
@@ -70,8 +66,13 @@ private:
 	brain_coord_t trg_index;
 
 public:
+	/**
+	 * Log statistics (min, max, mean) of all synaptic weights to a file for diagnostics.
+	 * Appends to "weights_log.txt" in the project root.
+	 */
 	void set_weight(weight_t w) { weight = w; }
 	weight_t get_weight() const { return weight; }
+	potential_t add_fetch_weight(potential_t delta) { return weight += delta; }
 	void set_ferment(TNN::ferment_t f) { ferment = f; }
 	TNN::ferment_t get_ferment() const { return ferment; }
 	void set_src_index(brain_coord_t src_index) { this->src_index = src_index; }
@@ -109,6 +110,7 @@ class neuron_t
 private:
 	std::atomic<potential_t> u_mem = params::u_rest;
 	potential_t threshold = params::initial_neuron_threshold;
+	potential_t threshold_adaptation = params::threshold_inc_per_spike;
 	clock_count_t last_fired = 0LL;
 
 	// Bitmap of current and previous spikes for STDP
@@ -129,16 +131,25 @@ public:
 	void fetch_add_u_mem(potential_t u_mem) { this->u_mem.fetch_add(u_mem); }
 	void set_threshold(potential_t threshold) { this->threshold = threshold; }
 	potential_t get_threshold() const { return threshold; }
+	void set_threshold_adaptation(potential_t threshold_adaptation) { this->threshold_adaptation = threshold_adaptation; }
+	potential_t get_threshold_adaptation() const { return threshold_adaptation; }
+	void update_threshold_adaptation(clock_count_t time_moment);
 	void set_last_fired(clock_count_t last_fired) { this->last_fired = last_fired; }
 	clock_count_t get_last_fired() const { return last_fired; }
 	void set_spiking_history(history_spikes_t spiking_history) { this->spiking_history = spiking_history; }
+	void update_spiking_history(clock_count_t time_moment)
+	{
+		this->spiking_history <<= (time_moment - this->last_fired);
+		this->spiking_history[0] = 0x1;
+	}
 	history_spikes_t get_spiking_history() const { return spiking_history; }
-	std::vector<brain_coord_t> &get_input_synapse_indexes() { return input_synapse_indexes; }
+	// Non-const overload: allows callers to modify the input synapse indexes
+	std::vector<brain_coord_t> &get_input_synapses_indexes() { return input_synapse_indexes; }
 	std::vector<brain_coord_t> &get_output_synapse_indexes() { return output_synapse_indexes; }
 	void set_trace(potential_t trace) { this->trace = trace; }
-	potential_t get_trace() const { return trace; }
+	potential_t get_trace() { return trace; }
 	void set_must_fire(bool must_fire) { this->must_fire = must_fire; }
-	bool get_must_fire() const { return must_fire; }
+	bool get_must_fire() { return must_fire; }
 
 	// Default operations
 	neuron_t() : u_mem(0.0), threshold(params::initial_neuron_threshold) {}
@@ -197,6 +208,7 @@ private:
 
 	std::atomic<state_t> state = state_t::ready_to_be_processed;
 	std::atomic<potential_t> threshold_base = params::normal_threshold_base;
+	// std::atomic<clock_count_t> nof_spikes = 0;
 	std::atomic<bool> has_a_must_fire = false;
 	clock_count_t time_moment = 0LL;
 
@@ -222,17 +234,22 @@ public:
 
 	void set_threshold_base(potential_t threshold_base) { this->threshold_base.store(threshold_base); }
 	potential_t get_threshold_base() { return threshold_base.load(); }
-	void set_has_a_must_fire(bool has_a_must_fire) { this->has_a_must_fire = has_a_must_fire; }
+	potential_t fetch_add_threshold_base(potential_t delta) { return threshold_base.fetch_add(delta); }
+
+	// void set_nof_spikes(clock_count_t nof_spikes) { this->nof_spikes.store(nof_spikes); }
+	// clock_count_t get_nof_spikes() { return nof_spikes.load(); }
+	// clock_count_t exchange_nof_spikes(clock_count_t delta) { return nof_spikes.exchange(delta); }
+	// clock_count_t fetch_add_nof_spikes(clock_count_t delta) { return nof_spikes.fetch_add(delta); }
+
 	bool get_has_a_must_fire() { return has_a_must_fire; }
 
 	void set_time_moment(clock_count_t time_moment) { this->time_moment = time_moment; }
 	clock_count_t get_time_moment() { return time_moment; }
 
-	void update_postsynaptic_neuron(neuron_t &cur_neuron, head_t &phead, int64_t delta_time);
-	std::shared_ptr<head_t> get_phead() { return phead; }
-	std::vector<neuron_t> &get_neurons() { return neurons; }
+	std::shared_ptr<head_t> get_phead() const { return phead; }
+	std::vector<neuron_t> &get_neurons() const { return neurons; }
 #ifdef DEBUG_TRACER
-	std::shared_ptr<tracer_t> get_ptracer() { return ptracer; }
+	std::shared_ptr<tracer_t> get_ptracer() const { return ptracer; }
 #endif
 	bool is_last_piece_in_layer() const { return last_piece_in_layer; }
 
@@ -307,12 +324,12 @@ potential_t cortex_leak_and_input(neuron_t &neuron,
 // void stdp_weight_update(neuron_t &neuron, neuron_t &post_neuron, synapse_t &synapse, clock_count_t afferent_spike_time);
 potential_t fire_neuron(neuron_t &cur_neuron, piece_t &piece, clock_count_t delta_time);
 
-void process_input_weights(neuron_t &cur_neuron, head_t &phead, clock_count_t post_synaptic_spike_time);
+void update_input_weights(neuron_t &cur_neuron, head_t &phead, clock_count_t post_synaptic_spike_time);
 void update_postsynaptic_neurons(neuron_t &cur_neuron, head_t &phead,
 								 potential_t threshold_base,
 								 clock_count_t delta_time);
 void stdp_weight_update(neuron_t &cur_neuron,
-						neuron_t &post_neuron,
+						neuron_t &pre_neuron,
 						synapse_t &synapse,
 						clock_count_t post_synaptic_spike_time);
 
@@ -355,7 +372,7 @@ private:
 public:
 	std::thread &get_worker_thread() { return worker_thread; }
 	void execute();
-	void calc_threshold_base();
+	// void calc_threshold_base();
 	worker_t(std::shared_ptr<head_t> phead);
 };
 
@@ -404,6 +421,8 @@ private:
 
 public:
 	std::condition_variable cv_processing_image;
+	counters_t<size_t> stats;
+
 	conn_descr_coll_t &get_connections_descr() { return connections_descr; }
 	std::vector<std::unique_ptr<layer_t>> &get_layers_descr() { return layers_descr; }
 	std::vector<piece_t> &get_pieces() { return pieces; }
@@ -415,22 +434,26 @@ public:
 	bool get_finish() { return finish.load(); }
 	void fetch_add_nof_active_workers(int n) { nof_active_workers.fetch_add(n); }
 	void set_label(int l) { label.store(l); }
-	uint32_t get_label() const { return label.load(); }
+	uint32_t get_label() { return label.load(); }
 	void set_couching_mode(bool couching_mode) { this->couching_mode.store(couching_mode); }
-	bool get_couching_mode() const { return couching_mode.load(); }
+	bool get_couching_mode() { return couching_mode.load(); }
 	metrics_t &get_metrics() { return metrics; }
-	void store_one_metric(bool fired, brain_coord_t col);
+	void store_one_metric(std::bitset<params::nof_cathegories> fired_neurons);
 	bool get_finished_processing_an_image() { return finished_processing_an_image.load(); }
 	void set_finished_processing_an_image(bool val) { finished_processing_an_image.store(val); }
 
 	void set_scene_index(uint64_t scene_index) { this->scene_index = scene_index; }
-	uint64_t get_scene_index() const { return scene_index; }
+	uint64_t get_scene_index() { return scene_index; }
 
-	brain_coord_t get_first_piece_index_in_layer(brain_coord_t layer) const;
+	brain_coord_t get_first_piece_index_in_layer(brain_coord_t layer);
 	clock_count_t get_net_time() { return net_timer.just_time(); }
 	clock_count_t inc_net_time() { return net_timer.time_and_inc(); }
+	void normalize_neurons_thresholds()
+	{
+		for (auto &neuron : neurons)
+			neuron.set_threshold(params::initial_neuron_threshold * neuron.get_input_synapses_indexes().size());
+	}
 
-	// public:
 	void add_connections(brain_coord_t src_layer, brain_coord_t trg_layer,
 						 TNN::ferment_t ferment, TNN::connection_type connection_type);
 
@@ -443,7 +466,7 @@ public:
 #endif
 	);
 
-	abs_address_t abs_address(brain_coord_t addr);
+	abs_address_t abs_address(brain_coord_t addr) const;
 	brain_coord_t neuron_index(abs_address_t &&addr);
 	neuron_t &neuron_ref(const brain_coord_t &addr)
 	{
@@ -454,7 +477,17 @@ public:
 	void wake_up();
 	void go_to_sleep();
 
-	void print_counters(uint iteration) const;
+	void print_counters(uint iteration);
+
+	template <typename T, typename U>
+	// getter: pointer to member function of element type T returning U (const)
+	// collection: reference to vector of elements
+	void print_field(const std::string &filename, U (T::*getter)() const, const std::vector<T> &collection
+#ifdef DEBUG_TRACER
+					 ,
+					 std::shared_ptr<tracer_t> p_tracer
+#endif
+	) const;
 
 #ifdef DEBUG_TRACER
 	void save_model_to_file(std::string file_name, [[maybe_unused]] std::shared_ptr<tracer_t> ptracer);
@@ -480,6 +513,8 @@ public:
 		return p_eyes_optics->get_signal(i);
 	}
 	void print_nof_synapses_per_neuron();
+	// Logs
+
 	head_t();
 };
 

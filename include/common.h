@@ -50,11 +50,14 @@ constexpr brain_coord_t mnist_len = mnist_size * mnist_size;
 // learning params
 // constexpr int image_show_delay = 100; // ms
 constexpr int nof_images_in_learning_set = 100;
-constexpr int nof_images_in_test_set = 10;
-constexpr uint32_t learning_epoques = 5;
+constexpr int nof_images_in_test_set = 5;
+constexpr uint32_t learning_epoques = 10;
 constexpr int iterations_per_image = 10;
 
-#define tracer_period 3;
+// Tracer params
+#define tracer_period 1;
+
+// Logger params
 constexpr int weights_output_precision = 2;
 inline text_logger logger{"../logfile.txt "};
 

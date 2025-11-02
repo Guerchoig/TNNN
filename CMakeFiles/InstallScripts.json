@@ -1,9 +1,0 @@
-{
-	"InstallScripts" : 
-	[
-		"/home/sasha/source/tnnn/cmake_install.cmake",
-		"/home/sasha/source/tnnn/atomic_queue/cmake_install.cmake",
-		"/home/sasha/source/tnnn/atomic_queue/include/cmake_install.cmake"
-	],
-	"Parallel" : false
-}

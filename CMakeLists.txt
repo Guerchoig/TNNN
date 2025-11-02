@@ -8,12 +8,22 @@ project(TNN VERSION ${PROJECT_VESRION})
 # find_package(Boost COMPONENTS unit_test_framework REQUIRED)
 find_package(SFML 2.5 COMPONENTS audio graphics window system REQUIRED)
 
-add_subdirectory(atomic_queue)
-add_executable(test src/test.cpp atomic_queue)
-add_library(TNN src/brain.cpp src/input_output.cpp src/mnist_set.cpp atomic_queue)
+# add_subdirectory(atomic_queue)
+add_library(TNN STATIC
+    src/brain.cpp
+    src/input_output.cpp
+    src/mnist_set.cpp
+)
+
+add_executable(test src/test.cpp )
 
 
-set_target_properties(TNN test PROPERTIES
+set_target_properties(test PROPERTIES
+    CXX_STANDARD 23
+    CXX_STANDARD_REQUIRED ON
+)
+
+set_target_properties(TNN PROPERTIES
     CXX_STANDARD 23
     CXX_STANDARD_REQUIRED ON
 )
@@ -22,36 +32,26 @@ SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -pg")
 SET(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -pg")
 SET(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -pg")
 
+
 target_include_directories(TNN
-    PRIVATE "${CMAKE_BINARY_DIR}" 
-            "${CMAKE_CURRENT_SOURCE_DIR}/include" 
-            "${CMAKE_SOURCE_DIR}/atomic_queue/include/atomic_queue"
+    PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include"
 )
 
 target_include_directories(test
     PRIVATE "${CMAKE_BINARY_DIR}" 
             "${CMAKE_CURRENT_SOURCE_DIR}/include"
-            "${CMAKE_SOURCE_DIR}/atomic_queue/include/atomic_queue"
 )
 
-# target_link_libraries(reservoir_sampling PRIVATE
-#     reservoir_sampling
-# )
-target_link_libraries(test TNN )
 
-target_link_libraries(TNN sfml-graphics sfml-window sfml-system)
+target_link_libraries(test TNN sfml-graphics sfml-window sfml-system)
+
 
 if (MSVC)
-    target_compile_options(TNN PRIVATE
-        /W4
-       )
-       target_compile_options(test PRIVATE
+    target_compile_options(test PRIVATE
         /W4
        )
 else ()
-    target_compile_options(TNN PRIVATE
-    -O0 -Wall -Wextra -pedantic -Werror 
-    )
+   
    target_compile_options(test PRIVATE
    -O0 -Wall -Wextra -pedantic -Werror 
    )

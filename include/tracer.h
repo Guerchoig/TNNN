@@ -13,15 +13,15 @@ namespace tr
 {
     constexpr int inter_sells = 5;  // pixels
     constexpr int left_margin = 20; // pixels
-    constexpr int top_margin = 400; // pixels
-    constexpr int text_top = 300;   // pixels
+    constexpr int top_margin = 200; // pixels
+    constexpr int text_top = 100;   // pixels
     constexpr int char_size = 20;
     constexpr unsigned nof_dubbs = 2;
     constexpr int dubb_len = 300;
     constexpr int label_len = 150;
-    constexpr float fade_out_rate = 0.7;
+    constexpr float fade_out_rate = 0.1;
     constexpr std::uint8_t transparent = 0xFF;
-    constexpr unsigned nof_sprites = 8;
+    constexpr unsigned nof_sprites = 18;
     constexpr unsigned scene_width = mnist_size;
     constexpr unsigned magnification = 9;
     constexpr std::uint8_t no_attenuation = 0xFF;

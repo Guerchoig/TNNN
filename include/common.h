@@ -16,9 +16,13 @@
 #include <tuple>
 #include <stdint.h>
 
+#define DEBUG_TRACER
+
+#include "tracer_macros.h"
+
 // Mode of operation parameters
 // ----------------------------------------------
-// #define DEBUG_TRACER
+
 
 // #define READ_NET_FROM_FILE
 // #define DEBUG
@@ -52,7 +56,7 @@ constexpr brain_coord_t mnist_len = mnist_size * mnist_size;
 constexpr int nof_images_in_learning_set = 100;
 constexpr int nof_images_in_test_set = 5;
 constexpr uint32_t learning_epoques = 10;
-constexpr int iterations_per_image = 10;
+constexpr int iterations_per_image = 15;
 
 // Tracer params
 #define tracer_period 1;
@@ -125,19 +129,21 @@ namespace TNN
         NO_LAYER = 0,
         RETINA = 1,
         CORTEX = 2,
-        COUCHING = 3,
-        ACTUATOR = 4
+        OUTPUT = 3,
+        REFERENCE = 4,
+        ACTUATOR = 5
     };
 
     enum ferment_t : clock_count_t
     {
-        DOPHAMINE = 1L,
-        GAMK = -1L
+        GLUTAMATE = 1L,
+        GABA = -1L
     };
 
     enum connection_type
     {
-        FULLY_CONNECTED
+        FULLY_CONNECTED,
+        ONE_TO_ONE
     };
 
 }

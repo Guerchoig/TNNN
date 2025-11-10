@@ -2,6 +2,7 @@
 #include "input_output.h"
 #include "mnist_set.h"
 #include "tracer.h"
+#include "tests.h"
 
 #include <vector>
 #include <array>
@@ -45,12 +46,7 @@ void redirect_output_to_console(std::streambuf *old_cout)
         std::cout.rdbuf(old_cout); // возвращаем std::cout обратно в консоль
 }
 
-void main_loop(std::shared_ptr<head_t> phead
-#ifdef DEBUG_TRACER
-               ,
-               std::shared_ptr<tracer_t> ptracer
-#endif
-)
+void main_loop(std::shared_ptr<head_t> phead TRACE_PARAM)
 
 {
         std::mutex cv_mutex; // mutex for head->cv
@@ -76,20 +72,13 @@ void main_loop(std::shared_ptr<head_t> phead
         size_t pos_in_test_set = 1;
         size_t loop_num = 1;
 
-#ifdef DEBUG_TRACER
-        while (ptracer->poll_for_closed_event())
-#else
-        while (!stopp.load())
-#endif
+        WHILE_TRACER(ptracer)
         {
                 // Pass to next image
                 if (phead->next_image(pmnist) == nullptr)
                         break; // No more images
 
-#ifdef DEBUG_TRACER
-                auto index = phead->get_scene_index();
-                ptracer->set_scene_index(index);
-#endif
+                TRACE_STMT(auto index = phead->get_scene_index(); ptracer->set_scene_index(index););
                 // if (!(index % nof_images_in_learning_set))
                 //         std::cout << "Scene " << index << std::endl;
 
@@ -146,19 +135,7 @@ void main_loop(std::shared_ptr<head_t> phead
                                 ++pos_in_test_set;
                         }
                 }
-                // pass pointer to member function and the actual synapses collection
-                //                 phead->print_field<synapse_t, weight_t>("weights_log", &synapse_t::get_weight, phead->get_synapses()
-                // #ifdef DEBUG_TRACER
-                //                                                                                                    ,
-                //                                                         ptracer
-                // #endif
-                //                 );
-                phead->print_field<neuron_t, potential_t>("threshold_adaptation_log", &neuron_t::get_threshold_adaptation, phead->get_neurons()
-#ifdef DEBUG_TRACER
-                                                                                                                               ,
-                                                          ptracer
-#endif
-                );
+                // phead->print_field<neuron_t, potential_t>("threshold_adaptation_log", &neuron_t::get_threshold_adaptation, phead->get_neurons() TRACE_ARG);
         }
 
         phead->go_to_sleep();
@@ -171,71 +148,35 @@ void main_loop(std::shared_ptr<head_t> phead
 int main()
 {
 
-        // std::streambuf *old_buf = redirect_output_to_file("../output.txt");
-        // if (!old_buf)
-        //         return 1;
+        // run_stdp_tests();
+        // return 0;
 
-#ifdef DEBUG_TRACER
-        auto ptracer = std::move(std::make_shared<tracer_t>(1720, 1050));
-#endif
+        TRACE_DECL(auto ptracer = std::move(std::make_shared<tracer_t>(1720, 1050));)
         {
                 auto phead = std::move(std::make_shared<head_t>());
-#ifdef DEBUG_TRACER
-                ptracer->phead = phead;
-#endif
+                TRACE_STMT(ptracer->phead = phead;);
                 pmnist = std::make_shared<mnist_set>();
                 pmnist->init_set("../MNIST/train-images-idx3-ubyte",
                                  "../MNIST/train-labels-idx1-ubyte", true);
 
                 brain_coord_t first_neuron_index = 0;
-                phead->add_layer(TNN::RETINA, mnist_size, mnist_size, first_neuron_index,
-                                 //  params::usual_nof_pieces_per_layer, phead
-                                 4 * 4, phead
-#ifdef DEBUG_TRACER
-                                 ,
-                                 ptracer
-#endif
-                );
-                phead->add_layer(TNN::CORTEX, 32, 32, first_neuron_index,
-                                 // params::usual_nof_pieces_per_layer, phead
-                                 4 * 4, phead
-#ifdef DEBUG_TRACER
-                                 ,
-                                 ptracer
-#endif
-                );
+                phead->add_layer(TNN::RETINA, mnist_size, mnist_size, first_neuron_index, 4 * 4, phead TRACE_ARG);
+                phead->add_layer(TNN::REFERENCE, 1, params::nof_cathegories, first_neuron_index, params::nof_pieces_in_last_layer, phead TRACE_ARG);
+                phead->add_layer(TNN::CORTEX, mnist_size, mnist_size, first_neuron_index, 4 * 4, phead TRACE_ARG);
 
-                //                 phead->add_layer(TNN::CORTEX, mnist_size / 2, mnist_size / 2, first_neuron_index,
-                //                                  // params::usual_nof_pieces_per_layer / 4, phead
-                //                                  2 * 2, phead
-                // #ifdef DEBUG_TRACER
-                //                                  ,
-                //                                  ptracer
-                // #endif
-                //                 );
+                phead->add_layer(TNN::CORTEX, mnist_size, mnist_size, first_neuron_index, 4 * 4, phead TRACE_ARG);
 
-                phead->add_layer(TNN::COUCHING, 1, params::nof_cathegories, first_neuron_index,
-                                 params::nof_pieces_in_last_layer, phead
-#ifdef DEBUG_TRACER
-                                 ,
-                                 ptracer
-#endif
-                );
+                phead->add_layer(TNN::OUTPUT, 1, params::nof_cathegories, first_neuron_index, params::nof_pieces_in_last_layer, phead TRACE_ARG);
 
-                phead->add_connections(0, 1, TNN::DOPHAMINE, TNN::FULLY_CONNECTED);
-                phead->add_connections(1, 2, TNN::DOPHAMINE, TNN::FULLY_CONNECTED);
-                // phead->add_connections(2, 3, TNN::DOPHAMINE, TNN::FULLY_CONNECTED);
+                phead->add_connections(0, 2, TNN::GLUTAMATE, TNN::FULLY_CONNECTED);
+                phead->add_connections(2, 3, TNN::GLUTAMATE, TNN::FULLY_CONNECTED);
+                phead->add_connections(3, 4, TNN::GLUTAMATE, TNN::FULLY_CONNECTED);
+                phead->add_connections(1, 4, TNN::GLUTAMATE, TNN::ONE_TO_ONE);
 
                 // phead->print_nof_synapses_per_neuron();
                 // exit(0);
 
-#ifdef DEBUG_TRACER
-                main_loop(phead, ptracer);
-                // phead->save_model_to_file("../networks/net.out", ptracer);
-#else
-                main_loop(phead);
-                // phead->save_model_to_file("../networks/net.out");
-#endif
+                main_loop(phead TRACE_ARG);
         }
 
         // logger.dump_to_file(true, false);

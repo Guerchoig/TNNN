@@ -59,7 +59,7 @@ using namespace params;
 //                 // so input sources become couching synapses targets
 //                 // the weights of those synapses are not used
 //                 // input synapse number is put into the weight field
-//                 if (phead->layers[projection.layer]->ltype == TNN::layer_type::COUCHING)
+//                 if (phead->layers[projection.layer]->ltype == TNN::layer_type::OUTPUT)
 //                 {
 //                     neuron_address_t src_adr{src.layer, src.row, src.col};
 
@@ -145,7 +145,7 @@ using namespace params;
 
 // std::istream &operator>>(std::istream &is, layer_type &l_type)
 // {
-//     const std::unordered_map<std::string, layer_type> m{{"NOLAYER", TNN::NO_LAYER}, {"RETINA", TNN::RETINA}, {"CORTEX", TNN::CORTEX}, {"COUCHING", TNN::COUCHING}};
+//     const std::unordered_map<std::string, layer_type> m{{"NOLAYER", TNN::NO_LAYER}, {"RETINA", TNN::RETINA}, {"CORTEX", TNN::CORTEX}, {"OUTPUT", TNN::OUTPUT}};
 //     std::string layer_type_string;
 
 //     while (layer_type_string.empty() || layer_type_string.compare(" ") == 0) // skip newlines
@@ -252,8 +252,8 @@ concept Is_layer = std::is_base_of_v<layer_t, T>;
 //         case TNN::CORTEX:
 //             is >> static_cast<cortex_layer_t &>(*(*it));
 //             break;
-//         case TNN::COUCHING:
-//             is >> static_cast<couching_layer_t &>(*(*it));
+//         case TNN::OUTPUT:
+//             is >> static_cast<output_layer &>(*(*it));
 //             break;
 //         }
 //     }
@@ -297,7 +297,7 @@ concept Is_layer = std::is_base_of_v<layer_t, T>;
 
 // std::ostream &operator<<(std::ostream &os, const layer_descr_t &dsc)
 // {
-//     const char *types[5]{"NOLAYER\0", "RETINA\0", "CORTEX\0", "COUCHING\0", "ACTUATOR\0"};
+//     const char *types[5]{"NOLAYER\0", "RETINA\0", "CORTEX\0", "OUTPUT\0", "ACTUATOR\0"};
 //     os << types[dsc.type] << " " << dsc.dimensions.nof_rows << " " << dsc.dimensions.nof_cols << std::endl;
 //     return os;
 // }

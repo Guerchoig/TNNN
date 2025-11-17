@@ -12,6 +12,7 @@ find_package(SFML 2.5 COMPONENTS audio graphics window system REQUIRED)
 add_library(TNN STATIC
     src/brain.cpp
     src/input_output.cpp
+    src/tracer.cpp
     src/mnist_set.cpp
 )
 
@@ -72,6 +73,15 @@ target_compile_definitions(test PRIVATE MNIST_DATA_LOCATION="${CMAKE_CURRENT_SOU
 # set(CPACK_PACKAGE_CONTACT example@example.com)
 
 # include(CPack)
+
+include(FetchContent)
+FetchContent_Declare(
+  googletest
+  URL https://github.com/google/googletest/archive/03597a01ee50ed33e9dfd640b249b4be3799d395.zip
+)
+# For Windows: Prevent overriding the parent project's compiler/linker settings
+set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(googletest)
 
 # enable_testing()
 

@@ -23,6 +23,8 @@
 #define WHILE_TRACER(ptr) while ((ptr) ? (ptr)->poll_for_closed_event() : false)
 #else
 #define TRACE(...)
+#define TRACE_DECL(...)
+#define TRACE_STMT(...) /**/
 #define TRACE_PARAM
 #define TRACE_ARG
 #define TRACE_MEMBER_DECL

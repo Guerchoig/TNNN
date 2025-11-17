@@ -151,8 +151,9 @@ int main()
         // run_stdp_tests();
         // return 0;
 
-        TRACE_DECL(auto ptracer = std::move(std::make_shared<tracer_t>(1720, 1050));)
+        TRACE_DECL(auto ptracer = std::move(std::make_shared<tracer_t>(1720, 1050, params));)
         {
+                TRACE_STMT(ptracer->init_param_fields(););
                 auto phead = std::move(std::make_shared<head_t>());
                 TRACE_STMT(ptracer->phead = phead;);
                 pmnist = std::make_shared<mnist_set>();
@@ -161,12 +162,12 @@ int main()
 
                 brain_coord_t first_neuron_index = 0;
                 phead->add_layer(TNN::RETINA, mnist_size, mnist_size, first_neuron_index, 4 * 4, phead TRACE_ARG);
-                phead->add_layer(TNN::REFERENCE, 1, params::nof_cathegories, first_neuron_index, params::nof_pieces_in_last_layer, phead TRACE_ARG);
+                phead->add_layer(TNN::REFERENCE, 1, params.nof_cathegories.load(), first_neuron_index, params.nof_pieces_in_last_layer.load(), phead TRACE_ARG);
                 phead->add_layer(TNN::CORTEX, mnist_size, mnist_size, first_neuron_index, 4 * 4, phead TRACE_ARG);
 
                 phead->add_layer(TNN::CORTEX, mnist_size, mnist_size, first_neuron_index, 4 * 4, phead TRACE_ARG);
 
-                phead->add_layer(TNN::OUTPUT, 1, params::nof_cathegories, first_neuron_index, params::nof_pieces_in_last_layer, phead TRACE_ARG);
+                phead->add_layer(TNN::OUTPUT, 1, params.nof_cathegories.load(), first_neuron_index, params.nof_pieces_in_last_layer.load(), phead TRACE_ARG);
 
                 phead->add_connections(0, 2, TNN::GLUTAMATE, TNN::FULLY_CONNECTED);
                 phead->add_connections(2, 3, TNN::GLUTAMATE, TNN::FULLY_CONNECTED);

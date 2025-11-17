@@ -28,7 +28,6 @@
  */
 
 using namespace TNN;
-using namespace params;
 
 /**
  * Network Construction Functions
@@ -173,8 +172,8 @@ void head_t::normalize_neurons_thresholds()
   {
     if (!neuron.get_nof_inputs())
       neuron.set_nof_inputs(1); // For retina neurons
-    neuron.set_threshold(params::initial_neuron_threshold_per_inp * neuron.get_nof_inputs());
-    neuron.set_threshold_adaptation_step(params::threshold_inc_per_spike * neuron.get_nof_inputs() * std::exp(-1.0 / params::threshold_decrease_time));
+    neuron.set_threshold(params.initial_neuron_threshold_per_inp.load() * neuron.get_nof_inputs());
+    neuron.set_threshold_adaptation_step(params.threshold_inc_per_spike.load() * neuron.get_nof_inputs() * std::exp(-1.0 / params.threshold_decrease_time.load()));
   }
 }
 
@@ -195,7 +194,7 @@ piece_t::piece_t(TNN::layer_type type,
   std::mt19937 gen(rd());
   std::uniform_real_distribution<> u(0.2, 1);
 
-  threshold_base.store(params::normal_threshold_base);
+  threshold_base.store(params.normal_threshold_base.load());
 
   // Set last_piece_in_layer
   auto &layer = phead->get_layers_descr()[layer_num];
@@ -285,15 +284,15 @@ void stdp_weight_update(neuron_t &cur_neuron,
                         synapse_t &synapse,
                         clock_count_t time_moment)
 {
-  static const potential_t dw_plus = std::exp(-1.0 / dw_plus_time);
-  static const potential_t dw_minus = std::exp(-1.0 / dw_minus_time);
+  static const potential_t dw_plus = std::exp(-1.0 / params.dw_plus_time.load());
+  static const potential_t dw_minus = std::exp(-1.0 / params.dw_minus_time.load());
 
   auto cur_history = cur_neuron.get_spiking_history();
   auto post_history = post_neuron.get_spiking_history();
 
   // Time span between cur and post
   auto delta_time = std::clamp(post_neuron.get_last_fired() - cur_neuron.get_last_fired(),
-                               -clock_count_t{spiking_history_len}, clock_count_t{spiking_history_len});
+                               -clock_count_t{spiking_history_len} + 1, clock_count_t{spiking_history_len} - 1);
   potential_t history_term = 0.0;
 
   // STDP: cur before post -> increase weight, cur after post -> decrease weight
@@ -324,6 +323,8 @@ void update_postsynaptic_neurons(neuron_t &cur_neuron, head_t &phead,
 {
   auto output_synapse_indexes = cur_neuron.get_output_synapse_indexes();
   potential_t umem_reduce = 0.0;
+
+  // Update post neurons------------------------
   for (auto it = output_synapse_indexes.begin(); it != output_synapse_indexes.end(); ++it)
   {
     auto &synapse = phead.get_synapse(*it);
@@ -333,7 +334,7 @@ void update_postsynaptic_neurons(neuron_t &cur_neuron, head_t &phead,
 
     auto weight = synapse.get_weight();
 
-    umem_reduce += weight * h_planck;
+    umem_reduce += weight * params.h_planck.load();
 
     if (post_neuron.get_must_fire())
       continue; // will fire anyway, no need to update
@@ -344,21 +345,28 @@ void update_postsynaptic_neurons(neuron_t &cur_neuron, head_t &phead,
     auto u_mem = cortex_leak_and_input(post_neuron, weight, delta_for_post);
     post_neuron.set_u_mem(u_mem);
 
-    post_neuron.update_threshold_adaptation(delta_for_post);
+    post_neuron.leak_threshold_adaptation(delta_for_post);
 
     if (u_mem >= (post_neuron.get_threshold() + post_neuron.get_threshold_adaptation()) && delta_for_post > 0)
       post_neuron.set_must_fire(true);
   }
+  // Update current neuron --------------------------
   auto new_u = cur_neuron.get_threshold() + cur_neuron.get_threshold_adaptation() - umem_reduce;
   cur_neuron.set_u_mem(new_u);
+  cur_neuron.increase_threshold_adaptation();
   cur_neuron.set_last_fired(time_moment);
   cur_neuron.set_must_fire(false);
 }
 
 // update threshold_adaptation ****************************************************************************
-void neuron_t::update_threshold_adaptation(clock_count_t delta_for_post)
+void neuron_t::leak_threshold_adaptation(clock_count_t delta_for_post)
 {
-  threshold_adaptation += threshold_inc_per_spike - exp_term(delta_for_post, threshold_adaptation_step);
+  threshold_adaptation -= exp_term(delta_for_post, threshold_adaptation_step);
+}
+
+void neuron_t::increase_threshold_adaptation()
+{
+  threshold_adaptation += params.threshold_inc_per_spike.load();
 }
 
 // Layer processing functions ****************************************************************************
@@ -402,7 +410,7 @@ void retina_layer_t::process_neurons(piece_t &piece)
 
 void reference_layer_t::process_neurons(piece_t &piece)
 {
-  std::bitset<nof_cathegories> reference_values{0};
+  std::bitset<nof_cathegories_const> reference_values{0};
 
   auto &phead = *(piece.get_phead());
   if (!phead.get_couching_mode())
@@ -430,7 +438,8 @@ void reference_layer_t::process_neurons(piece_t &piece)
       if (reference_values.test(k))
       {
         post_neuron.set_must_fire(true);
-        TRACE_STMT(auto layer_addr = piece.get_phead()->abs_address(i);
+        auto layer_addr = piece.get_phead()->abs_address(i);
+        TRACE_STMT(layer_addr = piece.get_phead()->abs_address(i);
                    layer_addr.layer += 1;
                    piece.get_ptracer()->push_to_buf(tracer_buf, layer_addr,
                                                     std::numeric_limits<std::uint8_t>::max(),
@@ -474,7 +483,7 @@ void output_layer::process_neurons(piece_t &piece)
 
   auto &neurons = piece.get_neurons();
   auto phead = piece.get_phead();
-  std::bitset<nof_cathegories> fired_neurons{0};
+  std::bitset<nof_cathegories_const> fired_neurons{0};
   brain_coord_t k = 0;
   for (brain_coord_t i = piece.get_first_index();
        i < piece.get_first_index() + piece.get_size(); ++i, ++k)
@@ -514,7 +523,7 @@ void output_layer::process_neurons(piece_t &piece)
 
 potential_t leaked_u(neuron_t &neuron, clock_count_t delta_time)
 {
-  static const potential_t cortex_leak_alpha = std::exp(-1 / params::cortex_leak_tau);
+  static const potential_t cortex_leak_alpha = std::exp(-1 / params.cortex_leak_tau.load());
 
   return neuron.get_u_mem() * exp_term(delta_time, cortex_leak_alpha);
 }
@@ -532,7 +541,7 @@ void retina_leak_and_input([[maybe_unused]] neuron_t &neuron,
                            clock_count_t delta_time)
 {
   auto leak_term = leaked_u(neuron, delta_time);
-  neuron.set_u_mem(leak_term + signal / params::amplitude_quant_size * detector_alpha);
+  neuron.set_u_mem(leak_term + signal / params.amplitude_quant_size.load() * params.detector_alpha.load());
 }
 
 void head_t::wake_up()
@@ -581,7 +590,7 @@ brain_coord_t head_t::neuron_index(abs_address_t &&addr)
   return first_neuron_index + neuron_index;
 }
 
-void head_t::store_one_metric(std::bitset<nof_cathegories> fired_neurons)
+void head_t::store_one_metric(std::bitset<nof_cathegories_const> fired_neurons)
 {
   if (fired_neurons == 0)
     metrics.store_one_metric(metrics_t::results_t::NO_SPIKES);

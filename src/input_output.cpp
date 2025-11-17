@@ -10,7 +10,6 @@
 #include <string>
 #include <cmath>
 using namespace TNN;
-using namespace params;
 
 // constexpr auto
 // sqr(auto &&x) noexcept(noexcept(x * x)) -> decltype(x * x)

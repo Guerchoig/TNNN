@@ -21,34 +21,73 @@
 #include <tuple>
 #include <condition_variable>
 
-namespace params
+// Configuration parameters that were previously a namespace of constexpr values
+// We need a struct with runtime-configurable members; however, some locations
+// (e.g., std::bitset template param) still require compile-time sizes. Keep
+// a matching constexpr alias for such uses.
+struct params_t
 {
 	// Network params------------------------------------------------
-	constexpr brain_coord_t nof_cathegories = 10;
-	constexpr brain_coord_t usual_nof_pieces_per_layer = 16;
-	constexpr brain_coord_t nof_pieces_in_last_layer = 1;
-
-	// Neuron's membrana params-----------------------------------------------
-	constexpr potential_t u_rest = 0.0;
-	constexpr potential_t cortex_leak_tau = 28.0; //  tics
+	std::atomic<brain_coord_t> nof_cathegories;
+	std::atomic<brain_coord_t> usual_nof_pieces_per_layer;
+	std::atomic<brain_coord_t> nof_pieces_in_last_layer;
 
 	// Neuron's threshold params-----------------------------------------------
-	constexpr potential_t initial_neuron_threshold_per_inp = 0.001;
-	constexpr potential_t threshold_inc_per_spike = initial_neuron_threshold_per_inp * 0.1;
-	constexpr potential_t threshold_decrease_time = 4; // tics
-	constexpr potential_t normal_threshold_base = 0.0;
-	constexpr potential_t h_planck = initial_neuron_threshold_per_inp * 0.5;
+	std::atomic<potential_t> initial_neuron_threshold_per_inp;
+	std::atomic<potential_t> threshold_inc_per_spike;
+	std::atomic<potential_t> threshold_decrease_time; // tics
+	std::atomic<potential_t> normal_threshold_base;
+
+	// Neuron's membrana params-----------------------------------------------
+	std::atomic<potential_t> u_rest;
+	std::atomic<potential_t> cortex_leak_tau; //  tics
+	std::atomic<potential_t> h_planck;
 
 	// Visual detector's  params------------------------------------------------
-	constexpr scene_signal_t max_scene_amplitude = 255;
-	constexpr int amplitude_quant_size = 32;
-	constexpr potential_t detector_alpha = initial_neuron_threshold_per_inp;
+	std::atomic<scene_signal_t> max_scene_amplitude;
+	std::atomic<int> amplitude_quant_size;
+	std::atomic<potential_t> detector_alpha;
 
 	// Weights update  params------------------------------------------------
-	constexpr potential_t dw_max = 0.005;
-	constexpr potential_t dw_plus_time = 2.0;
-	constexpr potential_t dw_minus_time = 2.0;
-}
+	std::atomic<potential_t> dw_max;
+	std::atomic<potential_t> dw_plus_time;
+	std::atomic<potential_t> dw_minus_time;
+
+	// Constructor initializes with previous values
+	params_t() noexcept
+		// Network params------------------------------------------------
+		: nof_cathegories(10),
+		  usual_nof_pieces_per_layer(16),
+		  nof_pieces_in_last_layer(1),
+		  // Neuron's threshold params-----------------------------------------------
+		  initial_neuron_threshold_per_inp(0.128),
+		  threshold_inc_per_spike(initial_neuron_threshold_per_inp.load() * 0.05),
+		  threshold_decrease_time(20.0),
+		  normal_threshold_base(0.0),
+		  // Neuron's membrana params-----------------------------------------------
+		  u_rest(0.0),
+		  cortex_leak_tau(28.0),
+		  h_planck(initial_neuron_threshold_per_inp.load() * 1),
+		  // Visual detector's  params------------------------------------------------
+		  max_scene_amplitude(255),
+		  amplitude_quant_size(32),
+		  detector_alpha(initial_neuron_threshold_per_inp.load() * 2.5),
+		  // Weights update  params------------------------------------------------
+		  dw_max(0.005),
+		  dw_plus_time(2.0),
+		  dw_minus_time(2.0)
+	{
+	}
+};
+
+// Global inline instance, replacing the former namespace usage
+inline params_t params;
+
+// Compile-time alias for fixed-size containers where a template parameter is required
+constexpr brain_coord_t nof_cathegories_const = 10;
+
+// Initialize tracer param fields here; tracer.h only declares the method
+// init_param_fields implementation moved to src/tracer.cpp
 
 using input_val_t = int;
 // Spiking history---------------------------------------
@@ -121,7 +160,7 @@ public:
 class neuron_t
 {
 private:
-	std::atomic<potential_t> u_mem = params::u_rest;
+	std::atomic<potential_t> u_mem = params.u_rest.load();
 	potential_t threshold = 0.0;
 	potential_t threshold_adaptation = 0.0;
 	potential_t threshold_adaptation_step = 0.0;
@@ -147,7 +186,8 @@ public:
 	potential_t get_threshold() const { return threshold; }
 	void set_threshold_adaptation(potential_t threshold_adaptation) { this->threshold_adaptation = threshold_adaptation; }
 	potential_t get_threshold_adaptation() const { return threshold_adaptation; }
-	void update_threshold_adaptation(clock_count_t delta_for_post); 
+	void leak_threshold_adaptation(clock_count_t delta_for_post);
+	void increase_threshold_adaptation();
 	void set_threshold_adaptation_step(potential_t step) { this->threshold_adaptation_step = step; }
 	potential_t get_threshold_adaptation_step() const { return threshold_adaptation_step; }
 	void set_last_fired(clock_count_t last_fired) { this->last_fired = last_fired; }
@@ -173,7 +213,7 @@ public:
 	bool get_must_fire() { return must_fire.load(); }
 
 	// Default operations
-	neuron_t() : u_mem(0.0), threshold(params::initial_neuron_threshold_per_inp) {}
+	neuron_t() : u_mem(0.0), threshold(params.initial_neuron_threshold_per_inp.load()) {}
 	neuron_t &operator=(const neuron_t &other) = default;
 
 	// Custom constructor
@@ -184,7 +224,7 @@ public:
 										 last_fired(last_fired) {}
 
 	// Explicit move operations
-	neuron_t(neuron_t &&other) noexcept : threshold(std::exchange(other.threshold, params::initial_neuron_threshold_per_inp)),
+	neuron_t(neuron_t &&other) noexcept : threshold(std::exchange(other.threshold, params.initial_neuron_threshold_per_inp.load())),
 										  last_fired(std::exchange(other.last_fired, 0LL)),
 										  spiking_history(std::exchange(other.spiking_history, history_spikes_t{spiking_history_init_value})),
 										  trace(std::exchange(other.trace, 0))
@@ -199,7 +239,7 @@ public:
 	neuron_t &operator=(neuron_t &&other) noexcept
 	{
 		u_mem.exchange(other.u_mem);
-		threshold = std::exchange(other.threshold, params::initial_neuron_threshold_per_inp);
+		threshold = std::exchange(other.threshold, params.initial_neuron_threshold_per_inp.load());
 		last_fired = std::exchange(other.last_fired, 0LL);
 		spiking_history = std::exchange(other.spiking_history, history_spikes_t{spiking_history_init_value});
 		trace = std::exchange(other.trace, 0);
@@ -228,7 +268,7 @@ private:
 	bool last_piece_in_layer = false;
 
 	std::atomic<state_t> state = state_t::ready_to_be_processed;
-	std::atomic<potential_t> threshold_base = params::normal_threshold_base;
+	std::atomic<potential_t> threshold_base = params.normal_threshold_base.load();
 	// std::atomic<clock_count_t> nof_spikes = 0;
 	clock_count_t time_moment = 0LL;
 
@@ -448,7 +488,7 @@ public:
 	void set_couching_mode(bool couching_mode) { this->couching_mode.store(couching_mode); }
 	bool get_couching_mode() { return couching_mode.load(); }
 	metrics_t &get_metrics() { return metrics; }
-	void store_one_metric(std::bitset<params::nof_cathegories> fired_neurons);
+	void store_one_metric(std::bitset<nof_cathegories_const> fired_neurons);
 	bool get_finished_processing_an_image() { return finished_processing_an_image.load(); }
 	void set_finished_processing_an_image(bool val) { finished_processing_an_image.store(val); }
 
@@ -460,7 +500,7 @@ public:
 	clock_count_t inc_net_time() { return net_timer.time_and_inc(); }
 	abs_address_t abs_address(brain_coord_t addr) const;
 	void normalize_neurons_thresholds();
-			
+
 	// Add connections between layers. connection_type specifies how neurons
 	// in src_layer are connected to neurons in trg_layer (e.g. FULLY_CONNECTED,
 	// ONE_TO_ONE).

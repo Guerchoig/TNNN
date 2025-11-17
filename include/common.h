@@ -16,13 +16,12 @@
 #include <tuple>
 #include <stdint.h>
 
-#define DEBUG_TRACER
+// #define DEBUG_TRACER
 
 #include "tracer_macros.h"
 
 // Mode of operation parameters
 // ----------------------------------------------
-
 
 // #define READ_NET_FROM_FILE
 // #define DEBUG

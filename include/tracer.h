@@ -1,5 +1,7 @@
 #pragma once
 #include "common.h"
+struct params_t; // forward declaration of params struct defined in brain.h
+#include "number_inp_fld.h"
 // #include <atomic_queue.h>
 #include <queue>
 #include <SFML/Graphics.hpp>
@@ -8,6 +10,8 @@
 #include <sstream>
 #include <memory>
 #include <mutex>
+#include <string>
+#include <type_traits>
 
 namespace tr
 {
@@ -62,170 +66,72 @@ struct tracer_t
 
     std::mutex sfml_mutex;
 
-    void make_text_box(sf::Text &text, int len, sf::String &str)
+    params_t *pparams = nullptr;
+
+    // Param input fields container
+    struct param_input_field_iface
     {
-        text.setFont(font);
-        text.setCharacterSize(tr::char_size);
-        text.setFillColor(sf::Color::Red);
-        // text.setScale(tr::magnification, tr::magnification);
-        text.setPosition(len, tr::text_top);
-        text.setString(str);
-    }
+        virtual ~param_input_field_iface() = default;
+        virtual void handleEvent(const sf::Event &event) = 0;
+        virtual void draw(sf::RenderWindow &window) const = 0;
+        virtual void updateParam() = 0; // push value to params
+        virtual void setPosition(const sf::Vector2f &pos) = 0;
+    };
 
-    void make_black_mask(sf::RectangleShape &mask, int len, sf::Vector2f size)
+    template <typename T>
+    struct param_input_field_impl : param_input_field_iface
     {
-        mask.setPosition(len, tr::text_top);
-        mask.setSize(size);
-        mask.setFillColor(sf::Color::Black);
-    }
+        NumberInputField<T> field;
+        std::atomic<T> *param_ptr;
 
-    bool poll_for_closed_event()
-    {
-
-        std::lock_guard<std::mutex> lock(sfml_mutex);
-        sf::Event event;
-
-        window.setActive(true);
-        // check all the window's events that were triggered since the last iteration of the loop
-        bool res = true;
-        while (window.pollEvent(event))
+        param_input_field_impl(const sf::Vector2f &pos, const sf::Vector2f &size,
+                               const sf::Font &font, std::atomic<T> &param_ref,
+                               T minVal, T maxVal, const std::string &label)
+            : field(pos, size, font, minVal, maxVal, label), param_ptr(&param_ref)
         {
-            if (event.type == sf::Event::Closed)
-            {
-                res = false;
-                break;
-            }
-        }
-        window.setActive(false);
-
-        return res;
-    }
-
-    void fade_out_sprites()
-    {
-        for (unsigned i = 2; i < tr::nof_sprites; ++i)
-            for (unsigned j = 0; j < tr::scene_width; ++j)
-                for (unsigned k = 0; k < tr::scene_width; ++k)
-                {
-                    colors.at(i).at(j).at(k).g *= (1 - tr::fade_out_rate);
-                }
-    }
-
-    void lock_screen() { sfml_mutex.lock(); }
-
-    void unlock_screen() { sfml_mutex.unlock(); }
-
-    void display_tracer_buf(std::shared_ptr<tracer_buf_t> item, clock_count_t time_moment)
-    {
-        if (time_moment % tr::period != 0)
-            return;
-
-        std::lock_guard<std::mutex> lock(sfml_mutex);
-
-        window.setActive(true);
-
-        // Fade out sprites
-        fade_out_sprites();
-
-        // Update signals
-        for (auto it = item->begin(); it != item->end(); ++it)
-        {
-            auto addr = it->first;
-            colors.at(addr.layer).at(addr.abs_row).at(addr.abs_col).g = it->second;
+            field.setValue(param_ptr->load());
         }
 
-        // Update screen
-        sprites_texture.update(reinterpret_cast<std::uint8_t *>(colors.data()));
-        for (unsigned i = 0; i < tr::nof_sprites; ++i)
+        void handleEvent(const sf::Event &event) override { field.handleEvent(event); }
+        void draw(sf::RenderWindow &window) const override { field.draw(window); }
+        void updateParam() override
         {
-            window.draw(sprites.at(i));
-            window.draw(squares.at(i));
+            auto v = field.getValue();
+            if (param_ptr->load() != v)
+                param_ptr->store(v);
         }
+        void setPosition(const sf::Vector2f &pos) override { field.setPosition(pos); }
+    };
 
-        draw_scene_index();
+    std::vector<std::unique_ptr<param_input_field_iface>> param_fields;
+    void init_param_fields();
+    void update_param_field_positions();
 
-        window.display();
-        window.setActive(false);
-        item->clear();
-    }
+    // Layout for param fields
+    float param_scroll_y = 0.0f;
+    float param_scroll_x = 0.0f;
+    float param_field_width = 120.0f; // 120.0f;
+    float param_field_height = 28.0f;
+    float param_start_x = tr::left_margin + 450.0f;
+    float param_start_y = 10.0f;
+    float param_spacing_y = 34.0f;
+    float param_column_spacing = 200.0f;
+    int param_fields_per_column = 0;
+    int param_num_columns = 0;
 
-    void set_scene_index(uint64_t index) { scene_index = index; }
-
-    void draw_scene_index()
-    {
-        auto &text = texts.at(dubbs_t::SCENE_INDEX);
-
-        std::stringstream ss;
-        ss << scene_index;
-
-        strings.at(dubbs_t::SCENE_INDEX) = ss.str();
-        text.setString(strings.at(dubbs_t::SCENE_INDEX));
-
-        window.draw(black_mask);
-        window.draw(text);
-    }
-
-    std::shared_ptr<tracer_buf_t> get_tracer_buf()
-    {
-        return std::make_shared<tracer_buf_t>();
-    }
-
+    void make_text_box(sf::Text &text, int len, sf::String &str);
+    void make_black_mask(sf::RectangleShape &mask, int len, sf::Vector2f size);
+    bool poll_for_closed_event();
+    void fade_out_sprites();
+    void lock_screen();
+    void unlock_screen();
+    void display_tracer_buf(std::shared_ptr<tracer_buf_t> item, clock_count_t time_moment);
+    void set_scene_index(uint64_t index);
+    void draw_scene_index();
+    std::shared_ptr<tracer_buf_t> get_tracer_buf();
     void push_to_buf(std::shared_ptr<tracer_buf_t> pbuf, abs_address_t addr,
-                     uint8_t color, clock_count_t time_moment)
-    {
-        if (time_moment % tr::period == 0)
-            pbuf->push_back(std::make_pair<abs_address_t, uint8_t>(std::move(addr),
-                                                                   std::move(color)));
-    }
-
+                     uint8_t color, clock_count_t time_moment);
+    float compute_params_columns_total_width() const;
     tracer_t(uint32_t h_resolution,
-             uint32_t v_resolution) : h_resolution(h_resolution),
-                                      v_resolution(v_resolution)
-
-    {
-        for (unsigned i = 0; i < tr::nof_sprites; ++i)
-            for (unsigned j = 0; j < tr::scene_width; ++j)
-                for (unsigned k = 0; k < tr::scene_width; ++k)
-                    colors.at(i).at(j).at(k).a = tr::no_attenuation;
-
-        vidgets_in_row = (h_resolution - tr::left_margin) / (tr::inter_sells + tr::scene_width * tr::magnification);
-        window.create(sf::VideoMode(h_resolution, v_resolution), "TNNN tracer");
-
-        sprites_texture.create(tr::scene_width, tr::scene_width * tr::nof_sprites);
-
-        for (unsigned i = 0; i < tr::nof_sprites; ++i)
-        {
-            // Draw vidget
-            auto xpos = tr::left_margin + (i % vidgets_in_row) * (tr::scene_width * tr::magnification + tr::inter_sells);
-            auto ypos = tr::top_margin + (i / vidgets_in_row) * (tr::scene_width * tr::magnification + tr::inter_sells);
-            sprites.at(i).setPosition(xpos, ypos);
-            sprites.at(i).setTexture(sprites_texture);
-            sprites.at(i).setTextureRect(sf::IntRect(0, i * tr::scene_width, tr::scene_width, tr::scene_width));
-            sprites.at(i).setScale(tr::magnification, tr::magnification);
-
-            squares.at(i).setPosition(xpos - 1, ypos - 1);
-            squares.at(i).setSize(sf::Vector2f(tr::scene_width * tr::magnification + 2, tr::scene_width * tr::magnification + 2));
-            squares.at(i).setFillColor(sf::Color::Transparent);
-            squares.at(i).setOutlineColor(sf::Color::Green);
-            squares.at(i).setOutlineThickness(1);
-        }
-
-        auto font_loaded = font.loadFromFile("/usr/share/fonts/truetype/ubuntu/Ubuntu-R.ttf");
-        if (!font_loaded)
-        {
-            std::cerr << "Tracer font not loaded" << std::endl;
-            exit(2);
-        }
-
-        for (unsigned i = 0; i < texts.size(); ++i)
-        {
-            make_text_box(ltexts.at(i), tr::left_margin + tr::dubb_len * i, labels.at(i));
-            window.draw(ltexts.at(i));
-            // strings.at(i).replace().resize(tr::dubb_len - tr::label_len, ' ');
-            make_text_box(texts.at(i), tr::left_margin + tr::dubb_len * i + tr::label_len, strings.at(i));
-        }
-        make_black_mask(black_mask,
-                        tr::left_margin + tr::label_len,
-                        sf::Vector2f(tr::scene_index_width, tr::char_size));
-    }
+             uint32_t v_resolution, params_t &params);
 };

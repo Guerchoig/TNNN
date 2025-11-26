@@ -67,7 +67,7 @@ public:
 
         // Setup label (placed to the left of the input field)
         m_label.setFont(font);
-        m_label.setCharacterSize(14);
+        m_label.setCharacterSize(16);
         m_label.setFillColor(sf::Color::White);
         m_label.setString(labelText);
 
@@ -86,7 +86,7 @@ public:
 
         // Setup input text
         m_text.setFont(font);
-        m_text.setCharacterSize(14);
+        m_text.setCharacterSize(16);
         m_text.setFillColor(sf::Color::White);
         m_text.setPosition(position.x + 5, position.y + (size.y - 10) / 2);
 

@@ -210,26 +210,28 @@ void tracer_t::init_param_fields()
 #define ADD_FIELD(type, member, minv, maxv, label) \
     param_fields.emplace_back(std::make_unique<param_input_field_impl<type>>(sf::Vector2f(0, 0), fieldSize, font, pparams->member, minv, maxv, label));
 
-    // Network params
+    // Network dynamic params --------------------------------
+    // Detector
+    ADD_FIELD(potential_t, detector_alpha, (potential_t)0.0, (potential_t)100.0, "detector_alpha");
+    // Threshold
+    ADD_FIELD(potential_t, th_adapt_inc_per_spike, (potential_t)0.0, (potential_t)10.0, "th_inc_per_spike");
+    ADD_FIELD(potential_t, threshold_decrease_time, (potential_t)0.0, (potential_t)100.0, "th_decrease_time");
+    // Membrana
+    ADD_FIELD(potential_t, umem_decrease_time, (potential_t)0.0, (potential_t)1000.0, "umem_decrease_time");
+    ADD_FIELD(potential_t, u_rest, (potential_t)0.0, (potential_t)10.0, "u_rest");
+
+    // Network static params -------------------------------
     ADD_FIELD(brain_coord_t, nof_cathegories, (brain_coord_t)1, (brain_coord_t)256, "nof_cathegories");
     ADD_FIELD(brain_coord_t, usual_nof_pieces_per_layer, (brain_coord_t)1, (brain_coord_t)256, "usual_nof_pieces_per_layer");
     ADD_FIELD(brain_coord_t, nof_pieces_in_last_layer, (brain_coord_t)1, (brain_coord_t)256, "nof_pieces_in_last_layer");
 
     // Neuron thresholds
-    ADD_FIELD(potential_t, initial_neuron_threshold_per_inp, (potential_t)0.0, (potential_t)10.0, "init_th_per_inp");
-    ADD_FIELD(potential_t, threshold_inc_per_spike, (potential_t)0.0, (potential_t)10.0, "th_inc_per_spike");
-    ADD_FIELD(potential_t, threshold_decrease_time, (potential_t)0.0, (potential_t)100.0, "th_decrease_time");
+    ADD_FIELD(potential_t, initial_neuron_threshold, (potential_t)0.0, (potential_t)10.0, "init_th_per_inp");
     ADD_FIELD(potential_t, normal_threshold_base, (potential_t)-10.0, (potential_t)10.0, "normal_th_base");
-
-    // Membrana params
-    ADD_FIELD(potential_t, u_rest, (potential_t)-1.0, (potential_t)10.0, "u_rest");
-    ADD_FIELD(potential_t, cortex_leak_tau, (potential_t)0.0, (potential_t)1000.0, "cortex_leak_tau");
-    ADD_FIELD(potential_t, h_planck, (potential_t)0.0, (potential_t)10.0, "h_planck");
 
     // Visual detector params
     ADD_FIELD(scene_signal_t, max_scene_amplitude, (scene_signal_t)0, (scene_signal_t)65535, "max_scene_amplitude");
-    ADD_FIELD(int, amplitude_quant_size, (int)1, (int)1024, "amplitude_quant_size");
-    ADD_FIELD(potential_t, detector_alpha, (potential_t)0.0, (potential_t)100.0, "detector_alpha");
+    ADD_FIELD(potential_t, amplitude_quant_size, (potential_t)1.0, (potential_t)265.0, "amplitude_quant_size");
 
     // Weights update
     ADD_FIELD(potential_t, dw_max, (potential_t)0.0, (potential_t)1.0, "dw_max");

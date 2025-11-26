@@ -20,9 +20,6 @@
 
 #include "tracer_macros.h"
 
-// Mode of operation parameters
-// ----------------------------------------------
-
 // #define READ_NET_FROM_FILE
 // #define DEBUG
 // -----
@@ -31,10 +28,20 @@
 #define D(x) std::cout << x
 #define DN(x) std::cout << x << std::endl
 #define DF DN(__PRETTY_FUNCTION__)
+// Use TRACE_DECL for declarations that must live in the enclosing scope
+#define DEBUG_DECL(...) __VA_ARGS__
+// Use TRACE_STMT for statements; wrapped to be safe in if/else contexts
+#define DEBUG_STMT(...) \
+    do                  \
+    {                   \
+        __VA_ARGS__     \
+    } while (0)
 #else
 #define D(x) ;
 #define DN(x) ;
 #define DF ;
+#define DEBUG_DECL(...)
+#define DEBUG_STMT(...) /**/
 #endif
 
 // using view_dim = unsigned short;
@@ -54,15 +61,14 @@ constexpr brain_coord_t mnist_len = mnist_size * mnist_size;
 // constexpr int image_show_delay = 100; // ms
 constexpr int nof_images_in_learning_set = 100;
 constexpr int nof_images_in_test_set = 5;
-constexpr uint32_t learning_epoques = 10;
-constexpr int iterations_per_image = 15;
+constexpr uint32_t learning_epoques = 100;
+constexpr int iterations_per_image = 4;
 
 // Tracer params
 #define tracer_period 1;
 
 // Logger params
 constexpr int weights_output_precision = 2;
-inline text_logger logger{"../logfile.txt "};
 
 // Signum function
 template <typename T>
@@ -173,3 +179,4 @@ public:
 };
 
 inline unsigned nof_event_threads = 0;
+inline text_logger *plogger;

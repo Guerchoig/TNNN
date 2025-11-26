@@ -115,7 +115,7 @@ struct tracer_t
     float param_start_x = tr::left_margin + 450.0f;
     float param_start_y = 10.0f;
     float param_spacing_y = 34.0f;
-    float param_column_spacing = 200.0f;
+    float param_column_spacing = 250.0f;
     int param_fields_per_column = 0;
     int param_num_columns = 0;
 

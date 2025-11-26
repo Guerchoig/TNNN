@@ -79,8 +79,6 @@ void main_loop(std::shared_ptr<head_t> phead TRACE_PARAM)
                         break; // No more images
 
                 TRACE_STMT(auto index = phead->get_scene_index(); ptracer->set_scene_index(index););
-                // if (!(index % nof_images_in_learning_set))
-                //         std::cout << "Scene " << index << std::endl;
 
                 if (first_time)
                 {
@@ -102,9 +100,6 @@ void main_loop(std::shared_ptr<head_t> phead TRACE_PARAM)
                         phead->set_finished_processing_an_image(false);
                         loop_num++;
                 }
-
-                // phead->stats.print_all_counters();
-                // phead->stats.reset_all();
 
                 if (phead->get_couching_mode())
                 {
@@ -135,7 +130,23 @@ void main_loop(std::shared_ptr<head_t> phead TRACE_PARAM)
                                 ++pos_in_test_set;
                         }
                 }
-                // phead->print_field<neuron_t, potential_t>("threshold_adaptation_log", &neuron_t::get_threshold_adaptation, phead->get_neurons() TRACE_ARG);
+                DEBUG_STMT(potential_t sumw = 0.0; potential_t maxw = 0.0; potential_t minw = 1000.0; //
+                           for (auto synapse : phead->get_synapses()) {
+                                        auto val = synapse.get_weight();
+                                        sumw += val;
+                                        maxw = std::max(maxw, val);
+                                        minw = std::min(minw, val); }                             //
+                               * plogger
+                           << "Weights \t" << sumw / phead->get_synapses().size() << '\t' << minw << '\t' << maxw << std::endl;
+                           //    sumw = 0.0; maxw = 0.0; minw = 1000.0;                                                                  //
+                           //    for (auto pneuron = phead->get_neurons().begin(); pneuron != phead->get_neurons().end(); ++pneuron) {
+                           //         auto val = pneuron->get_threshold_adaptation();
+                           //            sumw += val;
+                           //            maxw = std::max(maxw, val);
+                           //            minw = std::min(minw, val); } //
+                           //        * plogger
+                           //    << "Th_adapt \t" << "Val: \t" << phead->get_label() << "\t" << "Stat: \t" << sumw / phead->get_neurons().size() << '\t' << minw << '\t' << maxw << std::endl
+                );
         }
 
         phead->go_to_sleep();
@@ -148,8 +159,10 @@ void main_loop(std::shared_ptr<head_t> phead TRACE_PARAM)
 int main()
 {
 
-        // run_stdp_tests();
-        // return 0;
+        text_logger logger("../log.txt");
+        logger << std::endl
+               << "BEGIN" << std::endl;
+        plogger = &logger;
 
         TRACE_DECL(auto ptracer = std::move(std::make_shared<tracer_t>(1720, 1050, params));)
         {
@@ -164,23 +177,24 @@ int main()
                 phead->add_layer(TNN::RETINA, mnist_size, mnist_size, first_neuron_index, 4 * 4, phead TRACE_ARG);
                 phead->add_layer(TNN::REFERENCE, 1, params.nof_cathegories.load(), first_neuron_index, params.nof_pieces_in_last_layer.load(), phead TRACE_ARG);
                 phead->add_layer(TNN::CORTEX, mnist_size, mnist_size, first_neuron_index, 4 * 4, phead TRACE_ARG);
-
                 phead->add_layer(TNN::CORTEX, mnist_size, mnist_size, first_neuron_index, 4 * 4, phead TRACE_ARG);
-
                 phead->add_layer(TNN::OUTPUT, 1, params.nof_cathegories.load(), first_neuron_index, params.nof_pieces_in_last_layer.load(), phead TRACE_ARG);
 
                 phead->add_connections(0, 2, TNN::GLUTAMATE, TNN::FULLY_CONNECTED);
+                phead->add_connections(1, 4, TNN::GLUTAMATE, TNN::ONE_TO_ONE);
                 phead->add_connections(2, 3, TNN::GLUTAMATE, TNN::FULLY_CONNECTED);
                 phead->add_connections(3, 4, TNN::GLUTAMATE, TNN::FULLY_CONNECTED);
-                phead->add_connections(1, 4, TNN::GLUTAMATE, TNN::ONE_TO_ONE);
 
-                // phead->print_nof_synapses_per_neuron();
+
+                // for (auto p = phead->get_neurons().begin(); p != phead->get_neurons().end(); ++p)
+                //         logger<< p->get_nof_inputs() << std::endl;
+                // logger.dump_to_file(); // Writes buffered lines to file
                 // exit(0);
 
                 main_loop(phead TRACE_ARG);
         }
 
-        // logger.dump_to_file(true, false);
+        logger.dump_to_file();
         // redirect_output_to_console(old_buf);
         std::cout << "Done" << std::endl;
         return 0;

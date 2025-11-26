@@ -4,7 +4,7 @@
 #include "tracer.h"
 // #include "atomic_queue.h"
 #include "eyes_optics.h"
-#include "counters.h"
+// #include "counters.h"
 // #include "vector2d.h"
 #include "metrics.h"
 #include "mnist_set.h"
@@ -33,19 +33,18 @@ struct params_t
 	std::atomic<brain_coord_t> nof_pieces_in_last_layer;
 
 	// Neuron's threshold params-----------------------------------------------
-	std::atomic<potential_t> initial_neuron_threshold_per_inp;
-	std::atomic<potential_t> threshold_inc_per_spike;
+	std::atomic<potential_t> initial_neuron_threshold;
+	std::atomic<potential_t> th_adapt_inc_per_spike;
 	std::atomic<potential_t> threshold_decrease_time; // tics
 	std::atomic<potential_t> normal_threshold_base;
 
 	// Neuron's membrana params-----------------------------------------------
+	std::atomic<potential_t> umem_decrease_time; //  tics
 	std::atomic<potential_t> u_rest;
-	std::atomic<potential_t> cortex_leak_tau; //  tics
-	std::atomic<potential_t> h_planck;
 
 	// Visual detector's  params------------------------------------------------
 	std::atomic<scene_signal_t> max_scene_amplitude;
-	std::atomic<int> amplitude_quant_size;
+	std::atomic<potential_t> amplitude_quant_size;
 	std::atomic<potential_t> detector_alpha;
 
 	// Weights update  params------------------------------------------------
@@ -60,22 +59,21 @@ struct params_t
 		  usual_nof_pieces_per_layer(16),
 		  nof_pieces_in_last_layer(1),
 		  // Neuron's threshold params-----------------------------------------------
-		  initial_neuron_threshold_per_inp(0.128),
-		  threshold_inc_per_spike(initial_neuron_threshold_per_inp.load() * 0.05),
-		  threshold_decrease_time(20.0),
-		  normal_threshold_base(0.0),
+		  initial_neuron_threshold(6.5),
+		  th_adapt_inc_per_spike(initial_neuron_threshold.load() * 0.15),
+		  threshold_decrease_time(7),
+		  normal_threshold_base(0.0), // Not used
 		  // Neuron's membrana params-----------------------------------------------
+		  umem_decrease_time(14.0),
 		  u_rest(0.0),
-		  cortex_leak_tau(28.0),
-		  h_planck(initial_neuron_threshold_per_inp.load() * 1),
 		  // Visual detector's  params------------------------------------------------
 		  max_scene_amplitude(255),
-		  amplitude_quant_size(32),
-		  detector_alpha(initial_neuron_threshold_per_inp.load() * 2.5),
+		  amplitude_quant_size(1.0),
+		  detector_alpha(static_cast<potential_t>(amplitude_quant_size.load()) / max_scene_amplitude.load() * initial_neuron_threshold.load() * 1.2),
 		  // Weights update  params------------------------------------------------
-		  dw_max(0.005),
-		  dw_plus_time(2.0),
-		  dw_minus_time(2.0)
+		  dw_max(0.04),
+		  dw_plus_time(7.5),
+		  dw_minus_time(3.0)
 	{
 	}
 };
@@ -160,10 +158,9 @@ public:
 class neuron_t
 {
 private:
-	std::atomic<potential_t> u_mem = params.u_rest.load();
+	std::atomic<potential_t> u_mem = 0.0;
 	potential_t threshold = 0.0;
 	potential_t threshold_adaptation = 0.0;
-	potential_t threshold_adaptation_step = 0.0;
 	clock_count_t last_fired = 0LL;
 
 	// Bitmap of current and previous spikes for STDP
@@ -175,6 +172,7 @@ private:
 
 	// Spike trace for STDP
 	potential_t trace = 0.0;
+	clock_count_t leaks_update_time = 0LL;
 
 	std::atomic<bool> must_fire = false;
 
@@ -186,10 +184,6 @@ public:
 	potential_t get_threshold() const { return threshold; }
 	void set_threshold_adaptation(potential_t threshold_adaptation) { this->threshold_adaptation = threshold_adaptation; }
 	potential_t get_threshold_adaptation() const { return threshold_adaptation; }
-	void leak_threshold_adaptation(clock_count_t delta_for_post);
-	void increase_threshold_adaptation();
-	void set_threshold_adaptation_step(potential_t step) { this->threshold_adaptation_step = step; }
-	potential_t get_threshold_adaptation_step() const { return threshold_adaptation_step; }
 	void set_last_fired(clock_count_t last_fired) { this->last_fired = last_fired; }
 	clock_count_t get_last_fired() const { return last_fired; }
 	void set_spiking_history(history_spikes_t spiking_history) { this->spiking_history = spiking_history; }
@@ -211,9 +205,13 @@ public:
 	potential_t get_trace() { return trace; }
 	void set_must_fire(bool must_fire) { this->must_fire = must_fire; }
 	bool get_must_fire() { return must_fire.load(); }
+	clock_count_t get_leaks_update_time() const { return leaks_update_time; }
+	void set_leak_update_time(clock_count_t time) { leaks_update_time = time; }
+	void leaks_values_by_time(clock_count_t time_moment, clock_count_t delta_time);
+	void after_spike_update(clock_count_t time_moment);
 
 	// Default operations
-	neuron_t() : u_mem(0.0), threshold(params.initial_neuron_threshold_per_inp.load()) {}
+	neuron_t() : u_mem(0.0), threshold(params.initial_neuron_threshold.load()) {}
 	neuron_t &operator=(const neuron_t &other) = default;
 
 	// Custom constructor
@@ -224,7 +222,7 @@ public:
 										 last_fired(last_fired) {}
 
 	// Explicit move operations
-	neuron_t(neuron_t &&other) noexcept : threshold(std::exchange(other.threshold, params.initial_neuron_threshold_per_inp.load())),
+	neuron_t(neuron_t &&other) noexcept : threshold(std::exchange(other.threshold, params.initial_neuron_threshold.load())),
 										  last_fired(std::exchange(other.last_fired, 0LL)),
 										  spiking_history(std::exchange(other.spiking_history, history_spikes_t{spiking_history_init_value})),
 										  trace(std::exchange(other.trace, 0))
@@ -239,7 +237,7 @@ public:
 	neuron_t &operator=(neuron_t &&other) noexcept
 	{
 		u_mem.exchange(other.u_mem);
-		threshold = std::exchange(other.threshold, params.initial_neuron_threshold_per_inp.load());
+		threshold = std::exchange(other.threshold, params.initial_neuron_threshold.load());
 		last_fired = std::exchange(other.last_fired, 0LL);
 		spiking_history = std::exchange(other.spiking_history, history_spikes_t{spiking_history_init_value});
 		trace = std::exchange(other.trace, 0);
@@ -265,7 +263,6 @@ private:
 	brain_coord_t layer_num;
 	brain_coord_t first_index;
 	brain_coord_t size;
-	bool last_piece_in_layer = false;
 
 	std::atomic<state_t> state = state_t::ready_to_be_processed;
 	std::atomic<potential_t> threshold_base = params.normal_threshold_base.load();
@@ -300,7 +297,6 @@ public:
 	std::shared_ptr<head_t> get_phead() const { return phead; }
 	std::vector<neuron_t> &get_neurons() const { return neurons; }
 	TRACE_GET_PTRACER
-	bool is_last_piece_in_layer() const { return last_piece_in_layer; }
 
 	piece_t(TNN::layer_type,
 			brain_coord_t layer_num,
@@ -313,7 +309,6 @@ public:
 										layer_num(other.layer_num),
 										first_index(other.first_index),
 										size(other.size),
-										last_piece_in_layer(other.last_piece_in_layer),
 										time_moment(other.time_moment),
 										phead(other.phead),
 										neurons(other.neurons) TRACE_MEMBER_MOVE_INIT
@@ -326,8 +321,6 @@ public:
 };
 
 // Basic layer -----------------------------------------------
-
-// clock_count_t calc_delta_time(neuron_t &neuron, clock_count_t afferent_spike_time);
 
 struct head_t; // forward declaration
 
@@ -354,17 +347,7 @@ public:
 };
 
 // Free functions------------------------------------------------
-void retina_leak_and_input(neuron_t &neuron, scene_signal_t signal,
-						   //   std::pair<scene_signal_t, clock_count_t> &timed_memory_signal,
-						   clock_count_t delta_time);
-potential_t cortex_leak_and_input(neuron_t &neuron,
-								  potential_t &weight,
-								  clock_count_t delta_time);
 
-// void stdp_weight_update(neuron_t &neuron, neuron_t &post_neuron, synapse_t &synapse, clock_count_t afferent_spike_time);
-void fire_neuron(neuron_t &cur_neuron, piece_t &piece, clock_count_t delta_time);
-
-void update_input_weights(neuron_t &cur_neuron, head_t &phead, clock_count_t time_moment);
 // Update postsynaptic neurons when cur_neuron fires.
 // time_moment: current network time when the spike occurred.
 void update_postsynaptic_neurons(neuron_t &cur_neuron, head_t &phead,
@@ -470,7 +453,7 @@ private:
 
 public:
 	std::condition_variable cv_processing_image;
-	counters_t<size_t> stats;
+	// counters_t<size_t> stats;
 
 	conn_descr_coll_t &get_connections_descr() { return connections_descr; }
 	std::vector<std::unique_ptr<layer_t>> &get_layers_descr() { return layers_descr; }
@@ -551,4 +534,4 @@ public:
 	head_t();
 };
 
-potential_t exp_term(clock_count_t delta_time, potential_t alpha);
+potential_t ipow(potential_t alpha, clock_count_t pow);
